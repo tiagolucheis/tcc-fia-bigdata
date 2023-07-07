@@ -1,0 +1,150 @@
+version: '3'
+
+x-superset-image: &superset-image ferrettivinicius/superset
+x-superset-volumes: &superset-volumes
+  - ./superset/docker:/app/docker
+  - ./superset/superset_home:/app/superset_home
+
+networks:
+  net:
+    driver: bridge
+
+services:
+  trino:
+    container_name: trino
+    hostname: trino
+    image: 'trinodb/trino:latest'
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./trino:/etc/trino
+    depends_on:
+      - hive-metastore
+    networks:
+      - net
+
+  hive-metastore:
+    container_name: hive-metastore
+    hostname: hive-metastore
+    image: ferrettivinicius/hive-metastore
+    ports:
+      - '9083:9083'
+    depends_on:
+      - postgres
+    networks:
+      - net
+    volumes:
+      - ./hive-metastore/warehouse:/user/hive/warehouse
+
+  minio:
+      image: minio/minio:latest
+      hostname: minio
+      container_name: minio
+      environment:
+        - MINIO_ROOT_USER=aulafia 
+        - MINIO_ROOT_PASSWORD=aulafia@123
+      volumes:
+        - ./minio:/data
+      networks:
+        - net
+      ports:
+        - 9000:9000
+        - 9001:9001
+      command: server /data --console-address ":9001"
+
+  redis:
+    image: redis:7
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - ./redis:/data
+    networks:
+      - net
+
+  postgres:
+    image: postgres:14
+    container_name: postgres
+    restart: unless-stopped
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    networks:
+      - net
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_USER=aulafia
+      - POSTGRES_PASSWORD=aulafia@123
+      - POSTGRES_DB=db_aulafia
+      - PGDATA=/var/lib/postgresql/data
+
+  superset:
+    image: *superset-image
+    container_name: superset_app
+    restart: unless-stopped
+    ports:
+      - 8088:8088
+    depends_on: 
+      - superset-init
+      - redis
+    networks:
+      - net
+    volumes: *superset-volumes
+    user: "root"
+    env_file: ./superset/docker/.env-non-dev
+    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+
+  superset-init:
+    image: *superset-image
+    container_name: superset_init
+    depends_on: 
+      - postgres
+    healthcheck:
+      disable: true
+    networks:
+      - net
+    volumes: *superset-volumes
+    user: "root"
+    env_file: ./superset/docker/.env-non-dev
+    command: ["/app/docker/docker-init.sh"]
+
+  airflow:
+    image: ferrettivinicius/airflow-aula-fia:latest
+    hostname: airflow
+    container_name: airflow
+    depends_on:
+      - postgres
+    volumes:
+        - ./airflow/dags:/usr/local/airflow/dags
+        - ./airflow/jars:/usr/local/airflow/jars
+        - ./airflow/config:/usr/local/airflow/config
+        - ./airflow/plugins:/usr/local/airflow/plugins
+    networks:
+        - net
+    ports:
+        - 8081:8080
+
+  jupyter:
+    image: jupyter/pyspark-notebook:spark-3.2.1
+    hostname: jupyter
+    container_name: jupyter
+    ports:
+      - 8888:8888
+    networks:
+      - net
+    volumes:
+      - ./jupyter/notebooks:/home/jovyan/notebooks
+      - ./jupyter/jars:/home/jovyan/jars
+
+  nifi:
+      image: apache/nifi:1.15.3
+      restart: always
+      hostname: nifi
+      container_name: nifi
+      ports:
+        - 8080:8080
+      environment:
+        - NIFI_WEB_HTTP_PORT=8080
+      networks:
+        - net
+      volumes:
+        - ./nifi/conf:/opt/nifi/nifi-current/conf
