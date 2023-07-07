@@ -167,4 +167,5 @@ minio/landing-zone/
 minio/raw/
 minio/context/
 minio/trust/
-nifi/
+superset/
+trino/
