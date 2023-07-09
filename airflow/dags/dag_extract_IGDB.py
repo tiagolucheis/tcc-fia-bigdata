@@ -14,8 +14,8 @@ default_args = {
 
 dag = DAG(dag_id='dag_extract_IGDB',
           default_args=default_args,
-          schedule_interval='0 3 * * *',
-          tags=['RAW']
+          schedule_interval='0 4 * * *',
+          tags=['LANDING', 'IGDB']
       )
 
 start_dag = DummyOperator(
