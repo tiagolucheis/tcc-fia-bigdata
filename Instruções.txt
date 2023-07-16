@@ -42,12 +42,24 @@ Instruções
 3 - Subir os contêineres do Airflow e Jupyter (o Airflow demora pra subir):
 
 
-  3.1- Subir:
-    docker-compose -f .\docker-compose.yaml up -d airflow jupyter
+  3.1- Subir o Airflow:
+    docker-compose -f .\docker-compose.yaml up -d airflow
+
+    docker exec -it airflow bash
+
+    pip install minio
+
+    \q
+
+    exti
+
+  3.2- Subir o Jupyter:
+    
+    docker-compose -f .\docker-compose.yaml up -d jupyter
   
-  3.2 - Baixar:
+  3.3 - Baixar:
     docker-compose -f .\docker-compose.yaml stop airflow jupyter
-	docker-compose -f .\docker-compose.yaml rm airflow jupyter
+	  docker-compose -f .\docker-compose.yaml rm airflow jupyter
   
 
 4 - Subir os contêineres do Trino e Superset (as dependências sobem junto):

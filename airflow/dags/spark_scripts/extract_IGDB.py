@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql.utils import AnalysisException
 import os, time, json
-from datetime import datetime
+from datetime import datetime, timedelta
 from requests import post
 
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
@@ -25,8 +25,8 @@ spark = (SparkSession.builder
 api_name = 'igdb'
 
 # Dados de acesso e URL da API
-client_id = "rtpo9gi65ed6me23fslamjdmqme962"
-authorization = "ojr9ucic9n7670dz3sbdba5kb2wa06"
+client_id = "nav10n96uf1vahn0sqiklmwuy331pz"
+authorization = "ipte8igbelhv6kjuah7r9biky6lker"
 api_prefix = "IGDB_"
 url = 'https://api.igdb.com/v4/'
 
@@ -50,10 +50,11 @@ schema = StructType([
             StructField("Exec_time", LongType(), nullable=False),
             StructField("Load_type", StringType(), nullable=False),
             StructField("Loaded_files", LongType(), nullable=False),
+            StructField("Total_duration", StringType(), nullable=False)
         ])
 
 # Define a data e hora do início da extração para a tabela de controle de atualizações 
-extraction_time = datetime.now()
+extraction_time = datetime.now() - timedelta(hours=3) #GMT -0300 (Horário Padrão de Brasília)
 
 # Define a data de extração para particionamento no Lake
 extraction_date = extraction_time.strftime("%Y-%m-%d")
@@ -62,10 +63,12 @@ extraction_date = extraction_time.strftime("%Y-%m-%d")
 
 # Executa um loop para varrer todos os endpoints e obter seus dados
 
-inicio_exec = time.time()
+start_time = time.time()
 
 for endpoint in endpoints:
     
+    start_time_endpoint = time.time()
+
     control_table_path = bucket_path + endpoint + '/control_table/'
     
     # Lê a tabela de controle ou cria uma nova se ela não existir
@@ -113,11 +116,11 @@ for endpoint in endpoints:
         if response.status_code == 200:
             data = response.json()
         else:
-            print("Erro na requisição: " + response.status_code)
+            print("Erro na requisição: " + str(response.status_code))
             break
 
         # Verifica se a resposta está vazia (fim dos dados)      
-        if not data or page == 3:
+        if not data:
             break
 
         # Incrementa o contador de páginas
@@ -133,12 +136,23 @@ for endpoint in endpoints:
         offset += data_retrieve_limit
         time.sleep(rate_limit)
 
+    end_time_endpoint = time.time()
+    execution_time_endpoint = end_time_endpoint - start_time_endpoint
+
+    # Calcula o tempo de execução
+    hours, rem = divmod(execution_time_endpoint, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    # Formata o tempo de execução
+    formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
     # Atualiza a tabela de controle com a data e hora da extração e o tipo de carga
     df_control = spark.createDataFrame([(
                                         extraction_time.strftime("%Y-%m-%d %H:%M:%S"),
                                         int(extraction_time.timestamp()),
                                         load_type,
-                                        page)], schema=schema)
+                                        page,
+                                        formatted_time)], schema=schema)
     # Salva o novo registro da tabela de controle 
     (df_control
         .write
@@ -149,12 +163,14 @@ for endpoint in endpoints:
     
     print(f"Foram importados {page} arquivos json para o endpoint '{endpoint}'")
 
-fim_exec = time.time()
-tempo_exec = fim_exec - inicio_exec
+end_time = time.time()
+execution_time = end_time - start_time
 
 # Calcula o tempo de execução
-horas = int(tempo_exec // 3600)
-minutos = int((tempo_exec % 3600) // 60)
-segundos = int(tempo_exec % 60)
+hours, rem = divmod(execution_time, 3600)
+minutes, seconds = divmod(rem, 60)
 
-print(f"Carga Inicial finalizada! Processo executado em {horas:02d}:{minutos:02d}:{segundos:02d}.")
+# Formata o tempo de execução
+formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
+print(f"Carga finalizada! Processo executado em {formatted_time}.")
