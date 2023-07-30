@@ -167,5 +167,6 @@ minio/landing-zone/
 minio/raw/
 minio/context/
 minio/trust/
+postgres/data/
 superset/
 trino/

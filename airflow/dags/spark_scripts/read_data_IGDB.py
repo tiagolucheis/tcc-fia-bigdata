@@ -13,6 +13,8 @@ import os, time, json
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
 spark = (SparkSession.builder
          .config("spark.jars.packages", "io.delta:delta-core_2.12:2.0.0")
+         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
          .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
          .config("spark.hadoop.fs.s3a.access.key", "aulafia")
          .config("spark.hadoop.fs.s3a.secret.key", "aulafia@123")
@@ -78,7 +80,7 @@ for endpoint in endpoints:
 
     # Lê a tabela de controle da origem
     df_source_control = spark.read.parquet(source_control_table_path)
-
+    
     # Lê a tabela de controle do destino ou cria uma nova se ela não existir
     try:
         df_target_control = spark.read.parquet(target_control_table_path)
@@ -89,17 +91,17 @@ for endpoint in endpoints:
     # Verifica se a tabela de controle está vazia, criando um Dataframe vazio se for o caso, e identificando a última data executada
     if df_target_control.count() == 0:
         df_actual = None
-
+    
         # Não há leitura prévia
         last_read = None
 
     # Caso contrário, carrega o Dataframe com os dados atuais
     else:
         df_actual = DeltaTable.forPath(spark, delta_table_path)
-        
+    
         # Define a data e hora da última leitura realizada
         last_read = df_target_control.select(fn.max(fn.col("Loaded_date")).alias("Latest_read")).collect()[0][0]
-
+    
     # Filtra as datas de execução em que houve a extração de dados
     valid_executions = df_source_control.where(df_source_control["Loaded_files"] > 0)
 
@@ -112,11 +114,13 @@ for endpoint in endpoints:
     if df_actual is not None:
         # Filtra as datas de execução que ainda não foram lidas
         exec_dates = [date for date in exec_dates if date > last_read]
-
+        
     for date in exec_dates:
         
+        print("Iniciando leitura de : " + date)
+        
         start_time_date = time.time()
-
+        
         # Lista de caminhos dos arquivos JSON no MinIO
         json_files = []
 
@@ -126,7 +130,7 @@ for endpoint in endpoints:
             json_files.append(path)
 
         df_date = None
-
+        
         # Loop para ler cada arquivo JSON e combinar os DataFrames
         for json_file in json_files:
             df_temp = spark.read.json(json_file)
@@ -134,46 +138,35 @@ for endpoint in endpoints:
             # Se o DataFrame inicial estiver vazio, atribui o DataFrame atual
             if df_date is None:
                 df_date = df_temp
+        
             # Caso contrário, combina o DataFrame atual com o DataFrame anterior
             else:
                 df_date = df_date.unionByName(df_temp, allowMissingColumns=True)
-            
+        
+
         # Se o DataFrame inicial estiver vazio, atribui o DataFrame atual
         if (df_actual is None):
-            df_result = df_date
+            df_actual = df_date
+            df_actual_rows = df_actual.count()
+        
+            # Salva os dados como uma tabela Delta (overwrite sobrescreverá a tabela existente)
+            df_actual.write.format("delta").mode("overwrite").save(delta_table_path)
+            df_actual = DeltaTable.forPath(spark, delta_table_path)
         
         # Caso contrário, combina o DataFrame atual com o DataFrame anterior
         else:
             
-            #columns_actual = df_actual.columns
-
-            #cols_to_update = [
-            #    f"destino.{column} = origem.{column}" for column in columns_actual if column != "id"
-            #]
-
-            #print("Cols to update: " + str(cols_to_update)
-
-            #df_result = df_actual \
-            #    .merge(df_date, on="id", how="outer") \
-            #    .whenMatchedUpdate(set=fn.expr(','.join(cols_to_update))) \
-            #    .whenNotMatchedInsertAll() \
-            #    .execute()
-            
-            print("Registros lidos: " + str(df_date.count()))
-
-            df_result = df_actual.alias("actualData") \
+            df_actual.alias("actualData") \
                 .merge(source = df_date.alias("updatedData"),
                        condition = fn.expr("actualData.id = updatedData.id")) \
                 .whenMatchedUpdateAll() \
                 .whenNotMatchedInsertAll() \
                 .execute()
 
-            print("Registros atualizados: " + str(df_result.count()))
+            df_actual_rows = df_actual.toDF().count()
 
-        # Salva o resultado do merge na tabela Delta (overwrite sobrescreverá a tabela existente)
-        df_result.write.format("delta").mode("overwrite").save(delta_table_path)
-
-        df_actual = df_result
+            # Salva o resultado do merge na tabela Delta (overwrite sobrescreverá a tabela existente)
+            df_actual.toDF().write.format("delta").mode("overwrite").save(delta_table_path)
 
         end_time_date = time.time()
         execution_time_date = end_time_date - start_time_date
@@ -191,7 +184,7 @@ for endpoint in endpoints:
                                             int(read_time.timestamp()),
                                             date,
                                             df_date.count(),
-                                            df_result.count(),
+                                            df_actual_rows,
                                             formatted_time)], schema=schema)
         # Salva o novo registro da tabela de controle 
         (df_target_control

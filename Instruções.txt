@@ -49,6 +49,8 @@ Instruções
 
     pip install minio
 
+    pip install delta-spark
+
     \q
 
     exti
