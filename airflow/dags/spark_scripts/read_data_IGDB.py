@@ -33,7 +33,7 @@ api_name = 'igdb'
 
 
 # Lista de Endpoints a serem lidos
-endpoints = ["games"]
+endpoints = ["genres", "game_modes"] # ["games", "genres", "game_modes"]
 
 # Define o nome do bucket de origem dos dados extraídos
 source_bucket_name = 'landing-zone'

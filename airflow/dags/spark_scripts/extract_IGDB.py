@@ -39,7 +39,7 @@ rate_limit = 0 # 1 / 4 (desabilitado em função do delay do S3)
 
 
 # Lista de Endpoints a serem carregados
-endpoints = ["games"]
+endpoints = ["game_modes"] # ["games", "genres", "game_modes"]
 
 # Define o path do bucket de destino dos dados extraídos
 bucket_path = 's3a://landing-zone/' + api_name + '/'
