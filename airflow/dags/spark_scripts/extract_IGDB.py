@@ -4,7 +4,7 @@ import pyspark.sql.functions as fn
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql.utils import AnalysisException
-import os, time, json
+import time
 from datetime import datetime, timedelta
 from requests import post
 
@@ -27,19 +27,20 @@ api_name = 'igdb'
 # Dados de acesso e URL da API
 client_id = "nav10n96uf1vahn0sqiklmwuy331pz"
 authorization = "ipte8igbelhv6kjuah7r9biky6lker"
-api_prefix = "IGDB_"
 url = 'https://api.igdb.com/v4/'
 
 # Limite de registros a serem lidos por request da API
 data_retrieve_limit = 500
 
 # Limite de requests a serem feitos por segundo (por limitação da API)
-rate_limit = 0 # 1 / 4 (desabilitado em função do delay do S3)
+rate_limit = 1 / 4 # (desabilitado em função do delay do S3)
 
+# Limite de registros a serem salvos por arquivo json
+data_save_limit = 10000
 
 
 # Lista de Endpoints a serem carregados
-endpoints = ["external_games"] # ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"]
+endpoints = ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"]
 
 # TO-DO: Definir método para obter dados de Endpoint que não possui o campo "updated_at" (ex: "multiplayer_modes")
 
@@ -132,7 +133,7 @@ for endpoint in endpoints:
         df = spark.createDataFrame(data)
 
         # Salva o dataframe em um arquivo json no diretório especificado
-        df.write.json(bucket_path + endpoint + '/' + extraction_date + '/' + api_prefix + endpoint + '_page_' + str(page).zfill(3) + '.json', mode='overwrite')
+        df.write.json(bucket_path + endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_' + str(page).zfill(3) + '.json', mode='overwrite')
 
         # Atualiza o offset para a próxima requisição e aguarda o rate limit      
         offset += data_retrieve_limit
@@ -163,7 +164,7 @@ for endpoint in endpoints:
         .save(control_table_path)
         )
     
-    print(f"Foram importados {page} arquivos json para o endpoint '{endpoint}'")
+    print(f"Foram importados {page} arquivos json para o endpoint '{endpoint}', em {formatted_time}.")
 
 end_time = time.time()
 execution_time = end_time - start_time

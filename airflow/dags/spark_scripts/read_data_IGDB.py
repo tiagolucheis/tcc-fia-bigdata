@@ -1,13 +1,13 @@
 # Define os imports necessários para a execução do código
-from pyspark.sql.types import *
 import pyspark.sql.functions as fn
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import SparkSession
+from pyspark.sql.window import Window 
 from pyspark.sql.types import *
 from pyspark.sql.utils import AnalysisException
 from datetime import datetime, timedelta
 from minio import Minio
 from delta.tables import DeltaTable
-import os, time, json
+import time
 
 
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
@@ -33,7 +33,7 @@ api_name = 'igdb'
 
 
 # Lista de Endpoints a serem lidos
-endpoints = ["external_games"] # ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"]
+endpoints = ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"]
 
 # Define o nome do bucket de origem dos dados extraídos
 source_bucket_name = 'landing-zone'
@@ -143,6 +143,17 @@ for endpoint in endpoints:
             else:
                 df_date = df_date.unionByName(df_temp, allowMissingColumns=True)
         
+
+        # Remove os registros duplicados, se houver (caso ocorram múltiplas alterações no mesmo registro durante o período de extração)
+        if df_date.count() != df_date.select("id").distinct().count():    
+    
+            window_spec = Window.partitionBy("id").orderBy(fn.col("updated_at").desc())
+            df_date = (
+                df_date
+                .withColumn("row_number", fn.row_number().over(window_spec))
+                .filter(fn.col("row_number") == 1)
+                .drop("row_number")
+            )
 
         # Se o DataFrame inicial estiver vazio, atribui o DataFrame atual
         if (df_actual is None):

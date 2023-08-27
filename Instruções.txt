@@ -51,9 +51,13 @@ Instruções
 
     pip install delta-spark
 
+    pip install aiohttp
+
+    pip install howlongtobeatpy
+
     \q
 
-    exti
+    exit
 
   3.2- Subir o Jupyter:
     
