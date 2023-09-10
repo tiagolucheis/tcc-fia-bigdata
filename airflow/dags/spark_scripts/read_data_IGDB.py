@@ -143,10 +143,10 @@ for endpoint in endpoints:
             else:
                 df_date = df_date.unionByName(df_temp, allowMissingColumns=True)
         
-
+        print ("Leitura finalizada. Iniciando merge com a tabela Delta. Contagem de registros: " + str(df_date.count()) + ".")
         # Remove os registros duplicados, se houver (caso ocorram múltiplas alterações no mesmo registro durante o período de extração)
         if df_date.count() != df_date.select("id").distinct().count():    
-    
+            
             window_spec = Window.partitionBy("id").orderBy(fn.col("updated_at").desc())
             df_date = (
                 df_date
@@ -167,6 +167,19 @@ for endpoint in endpoints:
         # Caso contrário, combina o DataFrame atual com o DataFrame anterior
         else:
             
+            print("Número de registros na tabela Delta: " + str(df_actual.toDF().count()) + ".")
+            
+            # Verifica se o Schema do DataFrame atual é igual ao Schema da tabela Delta
+            if (df_actual.toDF().schema != df_date.schema):
+                schema_actual = set(df_actual.toDF().schema.fieldNames())
+                schema_date = set(df_date.schema.fieldNames())
+                missing_columns = schema_actual - schema_date  
+                
+                # Adiciona as colunas faltantes ao DataFrame atual
+                for column in missing_columns:
+                    df_date = df_date.withColumn(column, fn.lit(None))
+                    
+            # Realiza o merge entre o DataFrame atual e a tabela Delta            
             df_actual.alias("actualData") \
                 .merge(source = df_date.alias("updatedData"),
                        condition = fn.expr("actualData.id = updatedData.id")) \
@@ -175,7 +188,7 @@ for endpoint in endpoints:
                 .execute()
 
             df_actual_rows = df_actual.toDF().count()
-
+            print("Número de registros na tabela Delta após o merge: " + str(df_actual_rows) + ".")
             # Salva o resultado do merge na tabela Delta (overwrite sobrescreverá a tabela existente)
             df_actual.toDF().write.format("delta").mode("overwrite").save(delta_table_path)
 

@@ -16,7 +16,7 @@ default_args = {
 dag = DAG(dag_id='dag_extract_HLTB',
           default_args=default_args,
           schedule_interval='10 5 * * *',
-          tags=['RAW', 'HLTB']
+          tags=['LANDING', 'HLTB']
       )
 
 start_dag = DummyOperator(
