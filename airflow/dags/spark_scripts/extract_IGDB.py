@@ -26,7 +26,7 @@ api_name = 'igdb'
 
 # Dados de acesso e URL da API
 client_id = "nav10n96uf1vahn0sqiklmwuy331pz"
-authorization = "ipte8igbelhv6kjuah7r9biky6lker"
+authorization = "hvphbzal24563rj5km9s4381jsphis"
 url = 'https://api.igdb.com/v4/'
 
 # Limite de registros a serem lidos por request da API
