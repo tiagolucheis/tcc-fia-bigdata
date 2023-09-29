@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from delta.tables import DeltaTable
 from HLTB_functions import loop_hltb
 
+from minio import Minio
+import io
 
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
 spark = (SparkSession.builder
@@ -43,18 +45,22 @@ schema = StructType([
         ])
 
 # Limite de registros a serem salvos por arquivo json
-data_save_limit = 1000
+data_save_limit = 5000
 
 # Número máximo de corrotinas simultâneas
 max_concurrent_coroutines = 25
 
+# Tamanho dos Chunks de dados a serem extraídos da API
+chunk_size = 1000
+
+# Define o path da tabela de controle de atualizações
 control_table_path = bucket_path + '/control_table/'
 
+# Define o path das listas de jogos a serem extraídos (IGDB e HLTB)
 igdb_game_list_path = 's3a://raw/igdb/games/delta/'
 hltb_game_list_path = 's3a://raw/hltb/delta/'
 
 
-    
 # Define a data e hora do início da extração para a tabela de controle de atualizações 
 extraction_time = datetime.now() - timedelta(hours=3) #GMT -0300 (Horário Padrão de Brasília)
 
@@ -68,6 +74,9 @@ extraction_timestamp = int(extraction_time.timestamp())
 start_time = time.time()
 
 
+# Número de arquivos json a serem salvos
+files = 0
+
 # Lê a tabela de controle ou cria uma nova se ela não existir
 try:
     df_control = spark.read.parquet(control_table_path)
@@ -80,12 +89,14 @@ if df_control.count() == 0:
     
     load_type = 'Initial'
 
+    print("Step 1: Carregando a lista de jogos a serem extraídos...")
+
     # Carrega a lista de jogos a serem extraídos
     df_games = (
         DeltaTable
         .forPath(spark, igdb_game_list_path)
     )
-
+    
     # Define a data e hora da última versão dos dados
     df_games_version = df_games.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
 
@@ -96,23 +107,86 @@ if df_control.count() == 0:
         .select("id", "name", "release_year")
     )
 
+    print("Step 2: Lista definida")
+
+    # RETIRAR! Amostragem para testes 
+    sample = 5000
+    frac = sample / df_games.count()
+    df_games = df_games.sample(withReplacement=False, fraction=frac, seed=42).limit(sample)
+
+    # Adiciona uma coluna de numeração para facilitar a divisão
+    df_games = df_games.withColumn("row_num", fn.monotonically_increasing_id())
+
+    # Adiciona uma coluna com o número do chunk
+    df_games = df_games.withColumn("chunk_num", fn.floor(df_games.row_num / chunk_size))
+
+    # Computa o número total de chunks
+    total_chunks = df_games.agg(fn.max("chunk_num")).collect()[0][0] + 1
+
+    # Cria buffer para acumular os resultados extraídos da API
+    json_buffer = []
+
+    print("Step 3: Definição dos buffers concluída")
+
     # Cria uma fila para enfileirar os resultados
     queue = asyncio.Queue()
 
-    # Inicia as tarefas de enfileiramento
-    extracted_data = asyncio.run(loop_hltb("GN", spark, df_games.collect(), queue, max_concurrent_coroutines, extraction_timestamp))
+    # Configura as informações de acesso ao MinIO para listar os objetos
+    minio_client = Minio("minio:9000", access_key="aulafia", secret_key="aulafia@123", secure=False)
 
-    # Define o número de arquivos json a serem salvos
-    files = math.ceil(extracted_data.count() / data_save_limit)
+    # Extrai e processa os dados por chunks
+    for chunk in range(total_chunks):
 
-    # Salva os arquivos json no bucket    
-    for i in range(files):
+        print("Chunk " + str(chunk + 1) + " de " + str(total_chunks) + ".")
 
-        df_part = extracted_data.limit(data_save_limit)
-        df_part.write.json(bucket_path + extraction_date + '/' + api_name + '_page_' + str(i+1).zfill(3) + '.json', mode='overwrite')
-        extracted_data = extracted_data.subtract(df_part)
+        # Filtra os dados do chunk atual
+        df_chunk = df_games.filter(fn.col("chunk_num") == chunk)
 
-        print("Arquivo " + str(i+1) + " de " + str(files) + " - " + str(df_part.count()) + " registros.")
+        # Inicia as tarefas de enfileiramento
+        extracted_data = asyncio.run(loop_hltb("GN", spark, df_chunk.collect(), queue, max_concurrent_coroutines, extraction_timestamp))
+
+        print("Quantidade de jogos encontrados: " + str(extracted_data.count()) + ".")
+
+        # Acumula os resultados extraídos da API
+        json_buffer.extend(extracted_data.toJSON().collect())
+
+        # Verifica se o buffer atingiu o limite de registros a serem salvos por arquivo json
+        if len(json_buffer) >= data_save_limit:
+
+            files += 1
+
+            # Remove os registros excedentes do buffer
+            data_to_save = json_buffer[:data_save_limit]
+
+            # Atualiza o buffer com os registros remanescentes
+            json_buffer = json_buffer[data_save_limit:]
+
+            # Nome do arquivo a ser salvo
+            file_name = api_name + '/' + extraction_date + '/' + api_name + '_page_' + str(files).zfill(3) + '.json'
+
+            # Transforma os dados em formato json
+            json_data = '\n'.join(data_to_save)
+
+            # Salva o arquivo json no bucket
+            minio_client.put_object('landing-zone', file_name, io.BytesIO(json_data.encode('utf-8')), len(json_data))
+            print("Arquivo salvo")
+            
+    # Verifica se o buffer ainda possui registros a serem salvos
+    if len(json_buffer) > 0:
+            
+            files += 1
+
+            # Nome do arquivo a ser salvo
+            file_name = api_name + '/' + extraction_date + '/' + api_name + '_page_' + str(files).zfill(3) + '.json'
+
+            # Transforma os dados em formato json
+            json_data = '\n'.join(json_buffer)
+
+            # Salva o arquivo json no bucket
+            minio_client.put_object('landing-zone', file_name, io.BytesIO(json_data.encode('utf-8')), len(json_data))
+            print("Arquivo salvo")
+
+    print("Step 4: Extração dos chunks concluída")
 
     print(f"Foram importados {files} arquivos json para a Carga Inicial")
 

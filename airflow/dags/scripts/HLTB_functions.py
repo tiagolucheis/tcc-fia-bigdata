@@ -1,5 +1,4 @@
 # Define os imports necessários para a execução do código
-import pyspark.sql.functions as fn
 from howlongtobeatpy import HowLongToBeat
 import aiohttp, asyncio
 from pyspark.sql.types import *
@@ -94,6 +93,7 @@ async def loop_hltb(search_type, spark, df_games, queue, max_concurrent_coroutin
         
         await asyncio.gather(*tasks)
         extracted_data = await process_results(spark, queue, extraction_timestamp)
-        
-    return extracted_data
     
+    session.close()
+    
+    return extracted_data

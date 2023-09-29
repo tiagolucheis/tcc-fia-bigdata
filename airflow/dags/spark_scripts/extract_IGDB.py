@@ -37,7 +37,7 @@ rate_limit = 1 / 4 # (desabilitado em função do delay do S3)
 
 # Limite de registros a serem salvos por arquivo json
 data_save_limit = 10000
-
+data_buffer = []
 
 # Lista de Endpoints a serem carregados
 endpoints = ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"]
@@ -125,19 +125,37 @@ for endpoint in endpoints:
         # Verifica se a resposta está vazia (fim dos dados)      
         if not data:
             break
-
-        # Incrementa o contador de páginas
-        page += 1
         
         # Cria o dataframe com os dados extraídos
         df = spark.createDataFrame(data)
 
-        # Salva o dataframe em um arquivo json no diretório especificado
-        df.write.json(bucket_path + endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_' + str(page).zfill(3) + '.json', mode='overwrite')
+        # Adiciona os dados ao buffer
+        data_buffer.extend(data)
+
+        # Verifica se o buffer atingiu o limite de registros a serem salvos
+        if len(data_buffer) >= data_save_limit:
+
+            # Incrementa o contador de páginas
+            page += 1
+
+            # Salva o dataframe em um arquivo JSON no diretório especificado
+            df_buffer = spark.createDataFrame(data_buffer)
+            df_buffer.write.json(bucket_path + endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_' + str(page).zfill(3) + '.json', mode='overwrite')
+            data_buffer = []
 
         # Atualiza o offset para a próxima requisição e aguarda o rate limit      
         offset += data_retrieve_limit
         time.sleep(rate_limit)
+
+    # Salva o saldo do buffer se houver dados
+    if data_buffer:
+
+        # Incrementa o contador de páginas
+        page += 1
+
+        # Salva o dataframe em um arquivo JSON no diretório especificado
+        df_buffer = spark.createDataFrame(data_buffer)
+        df_buffer.write.json(bucket_path + endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_' + str(page).zfill(3) + '.json', mode='overwrite')
 
     end_time_endpoint = time.time()
     execution_time_endpoint = end_time_endpoint - start_time_endpoint
