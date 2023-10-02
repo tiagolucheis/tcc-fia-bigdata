@@ -13,6 +13,17 @@ default_args = {
     'start_date': datetime(2023, 7, 15)
 }
 
+# Argumentos específicos da DAG
+specific_args = {
+    'api_name': 'igdb',
+    'endpoints': "games genres game_modes player_perspectives platforms external_games",
+    'mod_date_col': "updated_at"
+}
+
+# Converte o dicionário em uma lista de argumentos
+application_args = [f"--{key}={value}" for key, value in specific_args.items()]
+
+
 dag = DAG(dag_id='dag_raw_IGDB',
           default_args=default_args,
           schedule_interval='0 5 * * *',
@@ -41,7 +52,8 @@ task = SparkSubmitOperator(
                                 /usr/local/airflow/jars/delta-core_2.12-2.0.0.jar,\
                                 /usr/local/airflow/jars/delta-storage-2.0.0.jar,\
                                 /usr/local/airflow/jars/hadoop-aws-3.2.2.jar'.replace(' ', ''),
-                          application='/usr/local/airflow/dags/spark_scripts/read_data_IGDB.py',
+                          application='/usr/local/airflow/dags/spark_scripts/read_data.py',
+                          application_args=application_args,
                           dag=dag
                       )
 
