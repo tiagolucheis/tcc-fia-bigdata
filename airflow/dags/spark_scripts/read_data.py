@@ -5,7 +5,7 @@ from pyspark.sql.utils import AnalysisException
 from pyspark.sql.window import Window 
 from delta.tables import DeltaTable
 import pyspark.sql.functions as fn
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from minio import Minio
 import time, argparse
 
@@ -141,6 +141,9 @@ def read_json(spark, json_files):
         
     # Loop para ler cada arquivo JSON e combinar os DataFrames
     for json_file in json_files:
+
+        print("Lendo arquivo: " + json_file)
+
         df_temp = spark.read.json(json_file, encoding="UTF-8")
         
         # Se o DataFrame inicial estiver vazio, atribui o DataFrame atual
@@ -151,6 +154,8 @@ def read_json(spark, json_files):
         else:
             df_read = df_read.unionByName(df_temp, allowMissingColumns=True)
     
+    print(df_read)
+
     # Remove os registros duplicados, se houver (caso ocorram múltiplas alterações no mesmo registro durante o período de extração)
     if df_read.count() != df_read.select("id").distinct().count():    
         
@@ -205,7 +210,8 @@ def merge_dataframes(spark, df_actual, df_date, delta_table_path):
 
         print("Número de registros na tabela Delta (após o merge): " + str(df_actual.toDF().count()) + ".")
         # Salva o resultado do merge na tabela Delta (overwrite sobrescreverá a tabela existente)
-        df_actual.toDF().write.format("delta").mode("overwrite").save(delta_table_path)
+        save_delta_table(df_actual.toDF(), delta_table_path)
+        
         return df_actual
 
 
@@ -244,11 +250,18 @@ def read_data_endpoint(spark, minio_client, configuration, read_time, endpoint):
     # Define o caminho do bucket de destino
     delta_table_path = configuration["target_bucket_path"] + endpoint + '/delta/'
 
+    # Total de registros lidos
+    total_rows = 0
+
     # Carrega o Dataframe com os dados atuais e define a data e hora da última leitura realizada
     df_actual, last_read = get_actual_data(spark, delta_table_path, df_target_control)
 
+    print("Última data lida: " + str(last_read) + ".")
+
     # Obtém as datas de execução que serão lidas
     exec_dates = get_exec_dates(df_source_control, df_actual, last_read)
+
+    print("Datas de execução que serão lidas: " + str(exec_dates) + ".")
 
     for date in exec_dates:
         print("Iniciando leitura de : " + date)
@@ -278,6 +291,9 @@ def read_data_endpoint(spark, minio_client, configuration, read_time, endpoint):
         # Formata o tempo de execução
         formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
+        # Atualiza o total de registros lidos
+        total_rows += df_date.count()
+
         # Atualiza a tabela de controle com a data e hora da leitura
         update_target_control_table(spark, configuration, df_target_control, endpoint, read_time, date, df_date.count(), df_actual.toDF().count(), formatted_time)
 
@@ -295,6 +311,7 @@ def read_data_endpoint(spark, minio_client, configuration, read_time, endpoint):
     formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
     print("Leitura da tabela " + endpoint + " finalizada! Processo executado em " + formatted_time + ".")
+    print("Total de registros lidos: " + str(total_rows) + ".")
 
 
 
@@ -311,8 +328,11 @@ def main():
     minio_client = get_minio_client()
     configuration = get_configuration()
     
+    # Define o offset UTC para o Brasil (GMT-3)
+    time_offset = timezone(timedelta(hours=-3))
+
     # Define a data e hora do início da leitura para a tabela de controle de atualizações 
-    read_time = datetime.now() - timedelta(hours=3) #GMT -0300 (Horário Padrão de Brasília)
+    read_time = datetime.now(time_offset)
 
     # Métrica de tempo de execução (início da leitura)
     start_time = time.time()

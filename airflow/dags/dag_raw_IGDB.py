@@ -26,8 +26,8 @@ application_args = [f"--{key}={value}" for key, value in specific_args.items()]
 
 dag = DAG(dag_id='dag_raw_IGDB',
           default_args=default_args,
-          schedule_interval='0 5 * * *',
-          tags=['RAW', 'IGDB']
+          schedule_interval='30 5 * * *',
+          tags=['RAW', 'IGDB', 'API', 'Delta']
       )
 
 start_dag = DummyOperator(
@@ -39,7 +39,7 @@ sensor_extraction = DailyExternalTaskSensor(
                     task_id = 'sensor_extraction',
                     external_dag_id = 'dag_extract_IGDB',
                     external_task_id = 'extract_IGDB',
-                    check_existence = True,
+                    check_existence = False,
                     dag = dag
                     )
 

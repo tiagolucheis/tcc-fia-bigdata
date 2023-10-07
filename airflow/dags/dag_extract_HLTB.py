@@ -10,13 +10,13 @@ os.environ["JAVA_HOME"] = Variable.get('JAVA_HOME')
 
 default_args = {
     'owner': 'aulafia',
-    'start_date': datetime(2023, 8, 26)
+    'start_date': datetime(2023, 10, 1)
 }
 
 dag = DAG(dag_id='dag_extract_HLTB',
           default_args=default_args,
-          schedule_interval='10 5 * * *',
-          tags=['LANDING', 'HLTB']
+          schedule_interval='0 6 * * 0',
+          tags=['LANDING', 'HLTB', 'API', 'JSON']
       )
 
 start_dag = DummyOperator(
@@ -28,7 +28,7 @@ sensor_extraction = DailyExternalTaskSensor(
                     task_id = 'sensor_extraction',
                     external_dag_id = 'dag_raw_IGDB',
                     external_task_id = 'read_data_IGDB',
-                    check_existence = True,
+                    check_existence = False,
                     dag = dag
                     )
 

@@ -26,8 +26,8 @@ application_args = [f"--{key}={value}" for key, value in specific_args.items()]
 
 dag = DAG(dag_id='dag_raw_HLTB',
           default_args=default_args,
-          schedule_interval='0 6 * * *',
-          tags=['RAW', 'HLTB']
+          schedule_interval='0 9 * * 0',
+          tags=['RAW', 'HLTB', 'API', 'Delta']
       )
 
 start_dag = DummyOperator(
@@ -39,7 +39,7 @@ sensor_extraction = DailyExternalTaskSensor(
                     task_id = 'sensor_extraction',
                     external_dag_id = 'dag_extract_HLTB',
                     external_task_id = 'extract_HLTB',
-                    check_existence = True,
+                    check_existence = False,
                     dag = dag
                     )
 

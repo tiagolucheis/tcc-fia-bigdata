@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from pyspark.sql.utils import AnalysisException
 import pyspark.sql.functions as fn
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from minio import Minio
 import io, json, requests, time
 
@@ -225,9 +225,11 @@ def main():
     minio_client = get_minio_client()
     configuration = get_configuration()
 
-    # Define a data e hora do início da extração para a tabela de controle de atualizações 
-    extraction_time = datetime.now() - timedelta(hours=3) #GMT -0300 (Horário Padrão de Brasília)
+    # Define o offset UTC para o Brasil (GMT-3)
+    time_offset = timezone(timedelta(hours=-3))
 
+    # Define a data e hora do início da extração para a tabela de controle de atualizações 
+    extraction_time = datetime.now(time_offset)
     # Define a data de extração para particionamento no Lake
     extraction_date = extraction_time.strftime("%Y-%m-%d")
     

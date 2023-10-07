@@ -4,10 +4,10 @@ from pyspark.sql.types import *
 from pyspark.sql.utils import AnalysisException
 from delta.tables import DeltaTable
 import pyspark.sql.functions as fn
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from minio import Minio
 from howlongtobeatpy import HowLongToBeat
-import time, math, aiohttp, asyncio, io, json
+import time, aiohttp, asyncio, io, json
 
 
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
@@ -40,7 +40,7 @@ def get_configuration():
         
         "data_save_limit": 5000,            # Número máximo de registros a serem salvos por arquivo json
         "max_concurrent_coroutines": 25,    # Número máximo de corotinas a serem executadas simultaneamente
-        "chunk_size": 1000,                 # Número de registros por chunk
+        "chunk_size": 150,                  # Número de registros por chunk
         "similarity_threshold": 0.8,        # Similaridade mínima para considerar um jogo como correspondente
 
         "bucket_path": 's3a://landing-zone/hltb/',
@@ -71,32 +71,78 @@ def get_control_table(configuration, spark):
 
 
 # Carrega a lista de jogos a serem extraídos (e sua versão) do Delta Lake do IGDB, já separando-os em chunks
-def load_game_list(game_list_path, spark, chunk_size):
-    df_games = (
-        DeltaTable
-        .forPath(spark, game_list_path)
-    )
-
-    # Define a data e hora da última versão dos dados
-    df_games_version = df_games.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
+def load_game_list(load_type, game_list_path, spark, chunk_size, api_name="", df_control=None):
+    
+    print("Step 1: Carregando a lista de jogos a serem extraídos...")
 
     df_games = (
-        df_games
-        .toDF()
-        .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
-        .select("id", "name", "release_year")
+            DeltaTable
+            .forPath(spark, game_list_path)
     )
+
+    if load_type == 'Initial':
+
+        # Define a data e hora da última versão dos dados
+        df_games_version = df_games.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
+
+        df_games = (
+            df_games
+            .toDF()
+            .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
+            .select("id", "name", "release_year")
+        )
+
+    else:
+        
+        if api_name == 'HLTB':
+            
+            df_games_version = None
+
+            df_games = (
+                df_games
+                .toDF()
+                .select("game_id", "id")
+            )  
+            
+        elif api_name == 'IGDB':
+
+            # Define a data e hora da última versão dos dados
+            df_games_version = df_games.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
+
+            df_games = (
+                df_games
+                .toDF()
+                .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
+                .select("id", "name", "release_year")
+            )
+
+            # Define a data e hora da última atualização dos dados
+            previous_version = df_control.orderBy(fn.col("Exec_time"), asc=False).first()["IGDB_Game_Version"]    
+            
+            df_games_previous = (
+                spark.read.format("delta")
+                .option("versionAsOf", previous_version).load(game_list_path)
+                .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
+                .select("id", "name", "release_year")
+            )
+
+            df_games = df_games.exceptAll(df_games_previous)
+
+            print("Número de jogos a serem extraídos: " + str(df_games.count()) + ".")
 
     # RETIRAR! Amostragem para testes 
-    # sample = 5000
-    # frac = sample / df_games.count()
-    # df_games = df_games.sample(withReplacement=False, fraction=frac, seed=42).limit(sample)
+    #sample = 1000
+    #if df_games.count() > 0 and df_games.count() > sample:
+        #frac = sample / df_games.count()
+        #df_games = df_games.sample(withReplacement=False, fraction=frac, seed=42).limit(sample)
 
     # Adiciona uma coluna de numeração para facilitar a divisão
     df_games = df_games.withColumn("row_num", fn.monotonically_increasing_id())
 
     # Adiciona uma coluna com o número do chunk
     df_games = df_games.withColumn("chunk_num", fn.floor(df_games.row_num / chunk_size))
+
+    print("Step 2: Carregando a lista de jogos a serem extraídos... OK")
 
     return df_games, df_games_version
 
@@ -169,14 +215,23 @@ async def process_results(spark, queue, extraction_timestamp):
             df['id'] = game['id']
             df['extracted_datetime'] = extraction_timestamp         
 
-            df_json = df_json.unionByName(spark.createDataFrame([df]), allowMissingColumns = True)
-            
+            try:
+                df_json = df_json.unionByName(spark.createDataFrame([df]), allowMissingColumns = True)
+            except:
+                print(f"Erro ao processar o jogo {game['id']}.")
+                print(f"Tipo do dado: {type(df)}")
+                print(f"Conteúdo do dado: {df}")
+                print("")
+                print(f"Tipo do dado: {type(df_json)}")
+                print(f"Conteúdo do dado: ")
+                df_json.show(truncate=False)
+                              
     return df_json
 
 
 
 # Extrai os dados de um chunk de jogos, de forma assíncrona e concorrente
-async def extract_data_chunk(search_type, spark, df_chunk, queue, max_concurrent_coroutines, extraction_timestamp, similarity_threshold=1):
+async def extract_data_chunk(search_type, spark, df_chunk, queue, max_concurrent_coroutines, extraction_timestamp, similarity_threshold):
     
     semaphore = asyncio.Semaphore(max_concurrent_coroutines)
 
@@ -230,16 +285,64 @@ def update_control_table(configuration, spark, extraction_time, load_type, files
 
 
 
+# Separa os dados a serem extraídos em chunks e o processa a extração de cada chunk
+def extract_data_by_chunks(configuration, queue, search_type, extraction_time, extraction_date, spark, minio_client, data_buffer, df_games, files):
+
+    print("Step 3: Processando a extração dos dados...")
+
+    # Computa o número total de chunks
+    total_chunks = df_games.agg(fn.max("chunk_num")).collect()[0][0] + 1
+
+    # Processa a extração de cada chunk
+    for chunk in range(total_chunks):
+        print(f"Chunk {chunk + 1} de {total_chunks}.")
+        
+        print("Step 3.1: Obtendo o chunk de dados atual...")
+
+        # Obtém o chunk de dados atual
+        df_chunk = get_data_chunk(df_games, chunk)
+
+        print("Step 3.2: Extraindo os dados do chunk atual...")
+
+        # Extrai os dados do chunk atual
+        extracted_data = asyncio.run(extract_data_chunk(search_type, spark, df_chunk, queue, configuration["max_concurrent_coroutines"], int(extraction_time.timestamp()), configuration["similarity_threshold"]))
+
+        print("Step 3.3: Processando os resultados extraídos...")
+
+        records = [json.loads(row) for row in extracted_data.toJSON().collect()]
+        data_buffer.extend(records)
+
+        print("Step 3.3: Processando os resultados extraídos... OK")
+
+        if len(data_buffer) >= configuration["data_save_limit"]:
+            
+            print("Step 3.4: Salvando os dados extraídos...")
+
+            # Incrementa o contador de arquivos
+            files += 1
+
+            # Salva o buffer em um arquivo JSON (limitado ao tamanho máximo definido)
+            data_to_save = data_buffer[:configuration["data_save_limit"]]
+            data_buffer = data_buffer[configuration["data_save_limit"]:]
+
+            save_data_buffer(configuration["api_name"], extraction_date, minio_client, data_to_save, files)
+
+            print("Step 3.5: Salvando os dados extraídos... OK")
+
+        # RETIRAR: Para testes (single chunk)
+        #if (chunk + 1) == 20:
+        #    break
+
+    print("Step 4: Processando a extração dos dados... OK")
+
+    return data_buffer, files
+
+
+
 # Realiza a carga inicial dos dados
 def initial_load(configuration, extraction_time, extraction_date, spark, minio_client):
     load_type = 'Initial'
 
-    # Obtém a lista de jogos a serem extraídos
-    df_games, df_games_version = load_game_list(configuration["igdb_game_list_path"], spark, configuration["chunk_size"])
-
-    # Computa o número total de chunks
-    total_chunks = df_games.agg(fn.max("chunk_num")).collect()[0][0] + 1
-    
     # Cria buffer para acumular os resultados extraídos da API
     data_buffer = []
 
@@ -249,36 +352,24 @@ def initial_load(configuration, extraction_time, extraction_date, spark, minio_c
     # Cria fila para enfileirar os resultados
     queue = asyncio.Queue()
 
-    for chunk in range(total_chunks):
-        print(f"Chunk {chunk + 1} de {total_chunks}.")
+    # Obtém a lista de jogos a serem extraídos
+    df_games, df_games_version = load_game_list(load_type, configuration["igdb_game_list_path"], spark, configuration["chunk_size"])
 
-        # Obtém o chunk de dados atual
-        df_chunk = get_data_chunk(df_games, chunk)
+    # Separa os dados a serem extraídos em chunks e o processa a extração de cada chunk
+    data_buffer, files = extract_data_by_chunks(configuration, queue, "GN", extraction_time, extraction_date, spark, minio_client, data_buffer, df_games, files)
 
-        # Extrai os dados do chunk atual
-        extracted_data = asyncio.run(extract_data_chunk("GN", spark, df_chunk, queue, configuration["max_concurrent_coroutines"], int(extraction_time.timestamp()), configuration["similarity_threshold"]))
-
-        records = [json.loads(row) for row in extracted_data.toJSON().collect()]
-        data_buffer.extend(records)
-
-        if len(data_buffer) >= configuration["data_save_limit"]:
-            
-            # Incrementa o contador de arquivos
-            files += 1
-
-            # Salva o buffer em um arquivo JSON (limitado ao tamanho máximo definido)
-            data_to_save = data_buffer[:configuration["data_save_limit"]]
-            data_buffer = data_buffer[configuration["data_save_limit"]:]
-
-            save_data_buffer(configuration["api_name"], extraction_date, minio_client, data_to_save, files)
-            
+    # Salva o buffer em um arquivo JSON (saldo remanescente)   
     if data_buffer:
 
-         # Incrementa o contador de arquivos
+        print("Step 4.1: Salvando os dados remanescentes...")
+
+        # Incrementa o contador de arquivos
         files += 1
 
         # Salva o buffer em um arquivo JSON (saldo remanescente)
         save_data_buffer(configuration["api_name"], extraction_date, minio_client, data_buffer, files)
+
+        print("Step 4.2: Salvando os dados remanescentes... OK")
         
     print(f"Foram importados {files} arquivos json para a Carga Inicial")
 
@@ -289,7 +380,54 @@ def initial_load(configuration, extraction_time, extraction_date, spark, minio_c
 # Realiza a carga incremental dos dados
 def incremental_load(configuration, extraction_time, extraction_date, spark, minio_client, df_control):
     load_type = 'Incremental'
-    pass
+
+    # Cria buffer para acumular os resultados extraídos da API
+    data_buffer = []
+
+    # Inicializa o contador de arquivos
+    files = 0
+
+    # Cria fila para enfileirar os resultados
+    queue = asyncio.Queue()
+
+
+    # Parte 1: Obtém os dados do How Long To Beat para os jogos já extraídos anteriormente
+
+    # Obtém a lista de jogos a serem extraídos (com base na lista de jogos já extraídos do How Long To Beat)
+    df_games_hltb, df_games_version = load_game_list(load_type, configuration["hltb_game_list_path"], spark, configuration["chunk_size"], api_name="HLTB")
+
+    print("Número de jogos a serem extraídos: " + str(df_games_hltb.count()) + ".")
+
+    # Separa os dados a serem extraídos em chunks e o processa a extração de cada chunk
+    data_buffer, files = extract_data_by_chunks(configuration, queue, "ID", extraction_time, extraction_date, spark, minio_client, data_buffer, df_games_hltb, files)
+ 
+
+    # Parte 2: Obtém os dados do How Long To Beat para os jogos atualizados do IGDB
+
+    # Obtém a lista de jogos a serem extraídos (com base na lista de atualizações do IGDB)
+    df_games_igdb, df_games_version = load_game_list(load_type, configuration["igdb_game_list_path"], spark, configuration["chunk_size"], api_name="IGDB", df_control=df_control)
+
+    # Remove os registros que já se encontram na tabela HLTB
+    df_games_igdb = df_games_igdb.join(df_games_hltb, df_games_igdb.id == df_games_hltb.id, how='left_anti').select("id", "name", "release_year", "chunk_num")
+    
+    print ("Número de jogos a serem extraídos (removendo os já consultados): " + str(df_games_igdb.count()) + ".")
+
+    # Separa os dados a serem extraídos em chunks e o processa a extração de cada chunk
+    data_buffer, files = extract_data_by_chunks(configuration, queue, "GN", extraction_time, extraction_date, spark, minio_client, data_buffer, df_games_igdb, files)
+ 
+
+    # Salva o buffer em um arquivo JSON (saldo remanescente)
+    if data_buffer:
+            
+        # Incrementa o contador de arquivos
+        files += 1
+
+        # Salva o buffer em um arquivo JSON (saldo remanescente)
+        save_data_buffer(configuration["api_name"], extraction_date, minio_client, data_buffer, files)
+
+    print(f"Foram importados {files} arquivos json para a Carga Incremental")
+
+    return load_type, files, df_games_version
 
 
 
@@ -308,14 +446,18 @@ def extract_data(configuration, extraction_time, extraction_date, spark, minio_c
     return load_type, files, df_games_version
 
 
+
 def main():
     # Obtém a sessão do Spark e as variáveis de configuração
     spark = create_spark_session()
     minio_client = get_minio_client()
     configuration = get_configuration()
 
+    # Define o offset UTC para o Brasil (GMT-3)
+    time_offset = timezone(timedelta(hours=-3))
+
     # Define a data e hora do início da extração para a tabela de controle de atualizações 
-    extraction_time = datetime.now() - timedelta(hours=3) #GMT -0300 (Horário Padrão de Brasília)
+    extraction_time = datetime.now(time_offset)
 
     # Define a data de extração para particionamento no Lake
     extraction_date = extraction_time.strftime("%Y-%m-%d")
@@ -344,82 +486,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-# Verifica se a tabela de controle está vazia, definindo o tipo de carga (inicial ou incremental)
-'''
-    load_type = 'Incremental'
-
-    # Carrega a lista de jogos a serem extraídos (com base na lista de jogos já extraídos do How Long To Beat)
-    df_games_hltb = (
-        DeltaTable
-        .forPath(spark, hltb_game_list_path).toDF()
-        .select("game_id", "id")
-    )
-
-    # Cria uma fila para enfileirar os resultados
-    queue = asyncio.Queue()
-
-    # Inicie as tarefas de enfileiramento
-    extracted_data_hltb = asyncio.run(loop_hltb("ID", spark, df_games_hltb.collect(), queue, max_concurrent_coroutines, int(extraction_time.timestamp())))
-
-    # Carrega a lista de jogos a serem extraídos (com base na lista de jogos já extraídos do How Long To Beat)
-    df_games_latest = (
-        DeltaTable
-        .forPath(spark, igdb_game_list_path)
-    )
-
-    # Define a data e hora da última versão dos dados
-    df_games_version = df_games_latest.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
-
-    df_games_latest = (
-        df_games_latest
-        .toDF()
-        .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
-        .select("id", "name", "release_year")
-    )
-    
-    # Define a data e hora da última atualização dos dados
-    previous_version = df_control.orderBy(fn.col("Exec_time"), asc=False).first()["IGDB_Game_Version"]    
-    
-    
-    df_games_previous = (
-        spark.read.format("delta")
-        .option("versionAsOf", previous_version).load(igdb_game_list_path)
-        .withColumn("release_year", fn.year(fn.to_timestamp(fn.from_unixtime("first_release_date"))))
-        .select("id", "name", "release_year")
-    )
-    
-    delta_df = df_games_latest.exceptAll(df_games_previous)
-
-    print("Número de jogos a serem extraídos: " + str(delta_df.count()) + ".")
-
-    # Remove os registros que já se encontram na tabela HLTB
-    df_games = delta_df.join(df_games_hltb, delta_df.id == df_games_hltb.id, how='left_anti').select("id", "name", "release_year")
-    
-    print ("Número de jogos a serem extraídos (removendo os já consultados): " + str(df_games.count()) + ".")
-
-    # Inicia as tarefas de enfileiramento
-    extracted_data_igdb = asyncio.run(loop_hltb("GN", spark, df_games.collect(), queue, max_concurrent_coroutines, int(extraction_time.timestamp())))
-
-    extracted_data = extracted_data_hltb.unionByName(extracted_data_igdb, allowMissingColumns = True)
-
-    # Define o número de arquivos json a serem salvos
-    files = math.ceil(extracted_data.count() / data_save_limit)
-    
-    print("Número de jogos extraídos: " + str(extracted_data.count()) + ".")
-    
-    # Salva os arquivos json no bucket
-    for i in range(files):
-
-        df_part = extracted_data.limit(data_save_limit)
-        df_part.write.json(bucket_path + extraction_date + '/' + api_name + '_page_' + str(i+1).zfill(3) + '.json', mode='overwrite')
-        extracted_data = extracted_data.subtract(df_part)
-
-        print("Arquivo " + str(i+1) + " de " + str(files) + " - " + str(df_part.count()) + " registros.")
-
-    print(f"Foram importados {files} arquivos json para a Carga Incremental")
-
-'''
