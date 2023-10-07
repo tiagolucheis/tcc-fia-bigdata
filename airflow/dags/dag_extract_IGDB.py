@@ -14,8 +14,8 @@ default_args = {
 
 dag = DAG(dag_id='dag_extract_IGDB',
           default_args=default_args,
-          schedule_interval='0 4 * * *',
-          tags=['LANDING', 'IGDB']
+          schedule_interval='0 5 * * *',
+          tags=['LANDING', 'IGDB', 'API', 'JSON', 'CSV']
       )
 
 start_dag = DummyOperator(
@@ -23,7 +23,7 @@ start_dag = DummyOperator(
                 dag=dag
                 )
 
-task = SparkSubmitOperator(
+task_extract = SparkSubmitOperator(
                           task_id='extract_IGDB',
                           conn_id='spark_local',
                           jars='/usr/local/airflow/jars/aws-java-sdk-dynamodb-1.11.534.jar,\
@@ -34,10 +34,23 @@ task = SparkSubmitOperator(
                           dag=dag
                       )
 
+task_import = SparkSubmitOperator(
+                          task_id='import_IGDB_Enums',
+                          conn_id='spark_local',
+                          jars='/usr/local/airflow/jars/aws-java-sdk-dynamodb-1.11.534.jar,\
+                                /usr/local/airflow/jars/aws-java-sdk-core-1.11.534.jar,\
+                                /usr/local/airflow/jars/aws-java-sdk-s3-1.11.534.jar,\
+                                /usr/local/airflow/jars/delta-core_2.12-2.0.0.jar,\
+                                /usr/local/airflow/jars/delta-storage-2.0.0.jar,\
+                                /usr/local/airflow/jars/hadoop-aws-3.2.2.jar'.replace(' ', ''),
+                          application='/usr/local/airflow/dags/spark_scripts/import_IGDB_Enums.py',
+                          dag=dag
+                      )
+
 dag_finish = DummyOperator(
                  task_id='dag_finish',
                  dag=dag
                  )
 
 
-start_dag >> task >> dag_finish
+start_dag >> [task_extract, task_import] >> dag_finish
