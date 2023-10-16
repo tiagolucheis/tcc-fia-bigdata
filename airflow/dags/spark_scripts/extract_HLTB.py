@@ -255,7 +255,7 @@ async def extract_data_chunk(search_type, spark, df_chunk, queue, max_concurrent
 def save_data_buffer(api_name, extraction_date, minio_client, data_buffer, files):
     
     # Nome do arquivo a ser salvo
-    file_name = api_name + '/games/' + extraction_date + '/' + api_name + '_page_' + str(files).zfill(3) + '.json'
+    file_name = api_name + '/games/' + extraction_date + '/' + api_name + '_games_page_' + str(files).zfill(3) + '.json'
 
     # Transforma os dados em formato json
     json_data = json.dumps(data_buffer)

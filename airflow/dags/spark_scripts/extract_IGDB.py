@@ -40,8 +40,9 @@ def get_configuration():
         "data_retrieve_limit": 500, # Número máximo de registros a serem recuperados por requisição
         "data_save_limit": 10000,   # Número máximo de registros a serem salvos por arquivo json
         
-        "endpoints": ["games", "genres", "game_modes", "player_perspectives", "platforms", "external_games"],
-        # TO-DO: Definir método para obter dados de Endpoint que não possui o campo "updated_at" (ex: "multiplayer_modes")
+        "endpoints_inc": ["games", "genres", "game_modes", "player_perspectives",       # Endpoints para extração incremental
+                           "platforms", "external_games"],
+        "endpoints_full": ["platform_families", "platform_logos"],                      # Endpoints para extração completa
 
         "bucket_path": 's3a://landing-zone/igdb/',  # Caminho do bucket no Minio
         "schema": StructType([
@@ -83,7 +84,7 @@ def make_post_request(url, request):
 def save_data_buffer(api_name, extraction_date, minio_client, endpoint, data_buffer, files):
     
     # Nome do arquivo a ser salvo
-    file_name = api_name + '/' + endpoint + '/' + extraction_date + '/' + api_name + '_page_' + str(files).zfill(3) + '.json'
+    file_name = api_name + '/' + endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_' + str(files).zfill(3) + '.json'
 
     # Transforma os dados em formato json
     json_data = json.dumps(data_buffer)
@@ -94,7 +95,7 @@ def save_data_buffer(api_name, extraction_date, minio_client, endpoint, data_buf
 
 
 # Atualiza a tabela de controle de atualizações de um endpoint específico
-def update_control_table(configuration, spark, endpoint, extraction_time, extraction_date, load_type, files, formatted_time):
+def update_control_table(configuration, spark, endpoint, extraction_time, load_type, files, formatted_time):
         
         # Define o path da tabela de controle
         control_table_path = configuration["bucket_path"] + endpoint + '/control_table/'
@@ -116,8 +117,9 @@ def update_control_table(configuration, spark, endpoint, extraction_time, extrac
         
         
 
-# Extrai os dados de um endpoint específico
-def extract_data_from_endpoint(configuration, extraction_time, extraction_date, spark, minio_client, endpoint):
+
+# Extrai os dados de um endpoint específico, utilizando o método de extração incremental (para tabelas que possuem campo de atualização)
+def extract_data_from_endpoint_inc(configuration, extraction_time, extraction_date, spark, minio_client, endpoint):
     
     # Buffer para acúmulo dos dados extraídos
     data_buffer = []
@@ -206,7 +208,106 @@ def extract_data_from_endpoint(configuration, extraction_time, extraction_date, 
     formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
     # Atualiza a tabela de controle com a data e hora da extração e o tipo de carga
-    update_control_table(configuration, spark, endpoint, extraction_time, extraction_date, load_type, files, formatted_time)
+    update_control_table(configuration, spark, endpoint, extraction_time, load_type, files, formatted_time)
+
+    print(f"Foram importados {files} arquivos json para o endpoint '{endpoint}', em {formatted_time}.")
+
+
+
+# Verifica se os dados no buffer são diferentes dos dados do último arquivo salvo (considerando estrutura e conteúdo)
+def check_data_buffer(spark, endpoint, api_name, bucket_path, df_control, data_buffer):
+
+    # Identifica a última data de gravação do endpoint (considere apenas Loades_files > 0)
+    last_file = df_control.filter(fn.col("Loaded_files") > 0).select(fn.max(fn.col("Exec_time")).alias("Latest_execution")).first()["Latest_execution"]
+
+    # Converte o timestamp para o formato YYYY-MM-DD, considerando o timezone do Brasil (GMT-3)
+    extraction_date = datetime.fromtimestamp(last_file, timezone(timedelta(hours=-3))).strftime("%Y-%m-%d")
+    
+    # Carrega os dados do último arquivo salvo
+    file_name = endpoint + '/' + extraction_date + '/' + api_name + '_' + endpoint + '_page_001.json'
+    df_last_file = spark.read.json(bucket_path + file_name)
+
+    # Cria um DataFrame com os dados do buffer para comparação do schema e conteúdo
+    df_buffer = spark.createDataFrame(data_buffer)
+
+    # Ordena as colunas dos DataFrames para garantir a comparação
+    df_last_file = df_last_file.select(sorted(df_last_file.columns))
+    df_buffer = df_buffer.select(sorted(df_buffer.columns))
+
+    # Verifica se os dados no buffer são diferentes dos dados do último arquivo salvo (considerando estrutura e conteúdo)
+    return df_last_file.schema != df_buffer.schema or df_last_file.subtract(df_buffer).count() > 0
+
+
+
+# Extrai os dados de um endpoint específico, utilizando o método de extração completa (para tabelas que não possuem campo de atualização)
+def extract_data_from_endpoint_full(configuration, extraction_time, extraction_date, spark, minio_client, endpoint):
+
+    # Buffer para acúmulo dos dados extraídos
+    data_buffer = []
+
+    # Métrica de tempo de execução (início da extração do endpoint)
+    start_time_endpoint = time.time()
+
+    # Obtém a tabela de controle de atualizações do endpoint
+    df_control = get_control_table(configuration, spark, endpoint)
+
+    # Query para solicitação dos dados de todos os dados (carga completa)
+    query = 'fields *; limit ' + str(configuration["data_retrieve_limit"]) + '; sort id asc;'
+
+    print("Iniciando endpoint: " + endpoint)
+
+    files = 0
+    offset = 0
+
+    url_endpoint = configuration["url"] + endpoint
+
+    while True:
+
+        # Atualiza a query com o offset
+        query_page = query + ' offset ' + str(offset) + ';'
+        
+        # Define os parâmetros da requisição
+        request = {'headers': {'Client-ID': configuration["client_id"], 'Authorization': 'Bearer ' + configuration["authorization"]},'data': query_page}
+
+        # Realiza a chamada via método POST
+        data = make_post_request(url_endpoint, request)
+
+        # Verifica se a resposta está vazia (erro ou fim dos dados)      
+        if not data:
+            break
+
+        # Acumula os dados extraídos em um buffer
+        data_buffer.extend(data)
+    
+        # Atualiza o offset para a próxima requisição e aguarda o rate limit
+        offset += configuration["data_retrieve_limit"]
+        time.sleep(configuration["rate_limit"])
+
+    # Salva o saldo do buffer se houver dados
+    if data_buffer:
+
+        # Se for a primeira extração ou se o buffer for diferente do último arquivo salvo, salva os dados em um arquivo JSON
+        if df_control.count() == 0 or check_data_buffer(spark, endpoint, configuration["api_name"], configuration["bucket_path"], df_control, data_buffer):
+            
+            # Incrementa o contador de arquivos
+            files += 1
+    
+            # Salva o buffer em um arquivo JSON
+            save_data_buffer(configuration["api_name"], extraction_date, minio_client, endpoint, data_buffer, files)
+
+    # Métrica de tempo de execução (fim da extração do endpoint)
+    end_time_endpoint = time.time()
+    execution_time_endpoint = end_time_endpoint - start_time_endpoint
+
+    # Calcula o tempo de execução do endpoint
+    hours, rem = divmod(execution_time_endpoint, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    # Formata o tempo de execução do endpoint
+    formatted_time = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+
+    # Atualiza a tabela de controle com a data e hora da extração e o tipo de carga
+    update_control_table(configuration, spark, endpoint, extraction_time, 'Full', files, formatted_time)
 
     print(f"Foram importados {files} arquivos json para o endpoint '{endpoint}', em {formatted_time}.")
 
@@ -214,8 +315,14 @@ def extract_data_from_endpoint(configuration, extraction_time, extraction_date, 
 
 # Extrai os dados da API
 def extract_data(configuration, extraction_time, extraction_date, spark, minio_client):
-    for endpoint in configuration["endpoints"]:
-        extract_data_from_endpoint(configuration, extraction_time, extraction_date, spark, minio_client, endpoint)
+    
+    # Extrai os dados dos endpoints para extração incremental
+    for endpoint in configuration["endpoints_inc"]:
+        extract_data_from_endpoint_inc(configuration, extraction_time, extraction_date, spark, minio_client, endpoint)
+
+    # Extrai os dados dos endpoints para extração completa
+    for endpoint in configuration["endpoints_full"]:
+        extract_data_from_endpoint_full(configuration, extraction_time, extraction_date, spark, minio_client, endpoint)
 
 
 
@@ -230,6 +337,7 @@ def main():
 
     # Define a data e hora do início da extração para a tabela de controle de atualizações 
     extraction_time = datetime.now(time_offset)
+    
     # Define a data de extração para particionamento no Lake
     extraction_date = extraction_time.strftime("%Y-%m-%d")
     

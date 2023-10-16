@@ -15,8 +15,10 @@ default_args = {
 
 # Argumentos específicos da DAG
 specific_args = {
-    'api_name': 'igdb',
-    'endpoints': "games genres game_modes player_perspectives platforms external_games",
+    'api_name': "igdb",
+    'endpoints': "games genres game_modes player_perspectives\
+                platforms platform_families platform_logos\
+                external_games", 
     'mod_date_col': "updated_at"
 }
 

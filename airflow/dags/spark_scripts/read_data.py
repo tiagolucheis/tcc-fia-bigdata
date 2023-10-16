@@ -108,11 +108,13 @@ def get_exec_dates(df_source_control, df_actual, last_read):
     # Filtra as datas de execução em que houve a extração de dados
     valid_executions = df_source_control.where(df_source_control["Loaded_files"] > 0)
 
-    # Cria uma lista contendo as datas que serão lidas
-    exec_dates = valid_executions \
-                    .withColumn("Exec_date", fn.date_format(fn.col("Exec_time").cast("timestamp"), "yyyy-MM-dd")) \
-                    .distinct().select("Exec_date").orderBy("Exec_date") \
-                    .rdd.flatMap(lambda x: x).collect()
+    # Cria uma lista contendo as datas que serão lidas, considerando o time offset do Brasil (GMT-3)
+    exec_dates = (
+        valid_executions
+        .withColumn("Exec_date", fn.date_format(fn.col("Exec_time").cast("timestamp") - fn.expr("INTERVAL 3 HOURS"), "yyyy-MM-dd"))
+        .distinct().select("Exec_date").orderBy("Exec_date")
+        .rdd.flatMap(lambda x: x).collect()
+    )
 
     if df_actual is not None:
         # Filtra as datas de execução que ainda não foram lidas
