@@ -1,6 +1,9 @@
+import sys
+sys.path.append('/usr/local/airflow/dags/')
+
 # Define os imports necessários para a execução do código
-import spark_scripts.create_context_functions as cfn
-import spark_scripts.create_context_IGDB_business_rules as br
+from spark_scripts import create_context_functions as cfn
+from spark_scripts import create_context_IGDB_business_rules as br
 from datetime import datetime, timedelta, timezone
 import time, argparse
 
@@ -8,9 +11,9 @@ import time, argparse
 parser = argparse.ArgumentParser(description="Script para Criação/Atualização das tabelas de contexto do IGDB.")
 
 parser.add_argument("--api_name", type=str, required=True, help="Nome da API")
-parser.add_argument("--endpoints", type=str, required=True, help="Lista de Endpoints")
-parser.add_argument("--date_cols", type=str, required=True, help="Coluna de controle de atualização do dado")
-parser.add_argument("--cols_to_drop", type=str, required=True, help="Colunas a serem removidas da tabela de contexto")
+parser.add_argument("--endpoint", type=str, required=True, help="Lista de Endpoints")
+parser.add_argument("--date_cols", type=str, required=False, help="Coluna de controle de atualização do dado")
+parser.add_argument("--cols_to_drop", type=str, required=False, help="Colunas a serem removidas da tabela de contexto")
 
 args = parser.parse_args()
 
@@ -38,10 +41,10 @@ def main():
         df_source = cfn.get_delta_table(spark, configuration["source_bucket_path"] + 'delta/')
         
         # Aplica as transformações e regras de negócio específicas da tabela
-        df_source = br.apply_business_rules(df_source, configuration)
+        df_source = br.apply_business_rules(spark, df_source, configuration)
 
         # Salva a tabela de contexto no formato Delta
-        cfn.save_delta_table(df_source.toDF(), configuration["target_bucket_path"] + 'delta/')
+        cfn.save_delta_table(df_source, configuration["target_bucket_path"] + 'delta/')
         
         # Métrica de tempo de execução (fim da importação)
         end_time = time.time()

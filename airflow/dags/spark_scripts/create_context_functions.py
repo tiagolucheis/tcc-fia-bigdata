@@ -30,14 +30,23 @@ def get_configuration(args):
     source_bucket_path = 's3a://raw/' + args.api_name + '/' + args.endpoint + '/'
     target_bucket_path = 's3a://context/' + args.api_name + '/' + args.endpoint + '/'
 
-    date_cols = args.date_cols.split()
-    cols_to_drop = args.cols_to_drop.split()
+    # Se não houver colunas de data ou colunas a serem removidas, define a lista como None
+    date_cols = None
+    cols_to_drop = None
 
+    # Se houver colunas de data ou colunas a serem removidas, cria uma lista com os nomes das colunas
+    if args.date_cols:
+        date_cols = args.date_cols.split()
+    if args.cols_to_drop:
+        cols_to_drop = args.cols_to_drop.split()
+    
     configuration = {
         "source_bucket_name": 'raw',                # Nome do bucket de origem
         "source_bucket_path": source_bucket_path,   # Caminho do bucket de origem
         "target_bucket_path": target_bucket_path,   # Caminho do bucket de destino
 
+        "api_name": args.api_name,                  # Nome da API
+        "endpoint": args.endpoint,                  # Nome do endpoint
         "date_cols": date_cols,                     # Colunas de data da tabela (para conversão para Unix Timestamp)
         "cols_to_drop": cols_to_drop,               # Colunas a serem removidas da tabela de contexto
 
@@ -96,7 +105,7 @@ def save_delta_table(df, delta_table_path, format="delta", mode="overwrite"):
 # Carrega o Dataframe com os dados atuais e define a data e hora da última leitura realizada
 def get_delta_table(spark, delta_table_path):
     try:
-        df_delta = DeltaTable.forPath(spark, delta_table_path)
+        df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
     except AnalysisException:
         df_delta = None
         

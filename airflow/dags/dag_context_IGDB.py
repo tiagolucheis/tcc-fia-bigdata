@@ -22,6 +22,15 @@ jars = '/usr/local/airflow/jars/aws-java-sdk-dynamodb-1.11.534.jar,\
 
 application = '/usr/local/airflow/dags/spark_scripts/create_context_IGDB.py'
 
+
+# Convertendo o dicionário em uma lista de argumentos
+def get_application_args(specific_args):
+    return [f"--{key}={value}" for key, value in specific_args.items()]
+
+
+
+# Pipeline definition
+
 dag = DAG(dag_id='dag_context_IGDB',
           default_args=default_args,
           schedule_interval='30 9 * * *',
@@ -56,14 +65,12 @@ specific_args_game_modes = {
     'cols_to_drop': 'checksum slug url'
 }
 
-app_args_game_modes = [f"--{key}={value}" for key, value in specific_args_game_modes.items()]
-
 task_game_modes = SparkSubmitOperator(
                             task_id='create_context_IGDB_game_modes',
                             conn_id='spark_local',
                             jars=jars,
                             application=application,
-                            application_args=app_args_game_modes,
+                            application_args=get_application_args(specific_args_game_modes),
                             dag=dag
                         )
 
@@ -76,16 +83,33 @@ specific_args_genres = {
     'cols_to_drop': 'checksum slug url'
 }
 
-app_args_genres = [f"--{key}={value}" for key, value in specific_args_genres.items()]
-
 task_genres = SparkSubmitOperator(
                             task_id='create_context_IGDB_genres',
                             conn_id='spark_local',
                             jars=jars,
                             application=application,
-                            application_args=app_args_genres,
+                            application_args=get_application_args(specific_args_genres),
                             dag=dag
                         )
+
+# ------------------ Player Perspectives ------------------
+
+specific_args_player_perspectives = {
+    'api_name': 'igdb',
+    'endpoint': 'player_perspectives',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'cheksum slug url'
+}
+
+task_player_perspectives = SparkSubmitOperator(
+                          task_id='create_context_IGDB_player_perspectives',
+                          conn_id='spark_local',
+                          jars=jars,
+                          application=application,
+                          application_args=get_application_args(specific_args_player_perspectives),
+                          dag=dag
+                      )
+
 
 # ------------------ Platforms ------------------
 
@@ -93,43 +117,39 @@ specific_args_platforms = {
     'api_name': 'igdb',
     'endpoint': 'platforms',
     'date_cols': 'created_at updated_at',
-    'cols_to_drop': 'checksum slug url summary'
+    'cols_to_drop': 'checksum slug url summary versions websites'
 }
-
-app_args_platforms = [f"--{key}={value}" for key, value in specific_args_platforms.items()]
 
 task_platforms = SparkSubmitOperator(
                           task_id='create_context_IGDB_platforms',
                           conn_id='spark_local',
                           jars=jars,
                           application=application,
-                          application_args=app_args_platforms,
+                          application_args=get_application_args(specific_args_platforms),
                           dag=dag
                       )
 
-# ------------------ Player Perspectives ------------------
 
-specific_args_platforms = {
+# ------------------ Games ------------------
+
+specific_args_games = {
     'api_name': 'igdb',
-    'endpoint': 'player_perspectives',
-    'date_cols': 'created_at updated_at',
-    'cols_to_drop': 'cheksum slug url'
+    'endpoint': 'games',
+    'date_cols': 'created_at first_release_date updated_at',
+    'cols_to_drop': 'checksum'
 }
 
-app_args_platforms = [f"--{key}={value}" for key, value in specific_args_platforms.items()]
-
-task_player_perspectives = SparkSubmitOperator(
-                          task_id='create_context_IGDB_player_perspectives',
-                          conn_id='spark_local',
-                          jars=jars,
-                          application=application,
-                          application_args=app_args_platforms,
-                          dag=dag
-                      )
-
+task_games = SparkSubmitOperator(
+                            task_id='create_context_IGDB_games',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_games),
+                            dag=dag
+                        )  
 
 
 
 # Pipeline definition
 
-start_dag >> sensor_extraction >> [task_game_modes, task_genres, task_platforms, task_player_perspectives] >> dag_finish
+start_dag >> sensor_extraction >> [task_game_modes, task_genres, task_player_perspectives, task_platforms] >> task_games >> dag_finish
