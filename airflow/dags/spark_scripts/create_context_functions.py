@@ -132,6 +132,8 @@ def check_source_update(spark, configuration):
     
     # Verifica se houve atualização na origem desde a última geração do contexto para o endpoint
     if not last_target_run or (last_source_update["Exec_time"] > last_target_run["Exec_time"]):
+        print("Houve atualização na origem desde a última geração do contexto.")
         return True
     else:
+        print("Não houve atualização na origem desde a última geração do contexto.")
         return False

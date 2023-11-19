@@ -12,6 +12,10 @@ default_args = {
     'start_date': datetime(2023, 7, 1)
 }
 
+
+
+# Pipeline definition
+
 dag = DAG(dag_id='dag_extract_IGDB',
           default_args=default_args,
           schedule_interval='0 5 * * *',
@@ -52,5 +56,7 @@ dag_finish = DummyOperator(
                  dag=dag
                  )
 
+
+# Pipeline definition
 
 start_dag >> [task_extract, task_import] >> dag_finish

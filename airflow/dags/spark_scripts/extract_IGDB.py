@@ -41,8 +41,14 @@ def get_configuration():
         "data_save_limit": 10000,   # Número máximo de registros a serem salvos por arquivo json
         
         "endpoints_inc": ["games", "genres", "game_modes", "player_perspectives",       # Endpoints para extração incremental
-                           "platforms", "external_games"],
-        "endpoints_full": ["platform_families", "platform_logos"],                      # Endpoints para extração completa
+                           "platforms", "external_games", "keywords", "languages",
+                           "language_supports", "language_support_types", "themes",
+                           "franchises", "collections", "game_engines", "companies", 
+                           "involved_companies", "game_localizations", "regions",
+                           "release_dates", "release_date_statuses"],
+        "endpoints_full": ["platform_families", "platform_logos", "multiplayer_modes",  # Endpoints para extração completa
+                           "game_engine_logos", "company_logos", "websites", "age_ratings",
+                           "age_rating_content_descriptions", "covers"],
 
         "bucket_path": 's3a://landing-zone/igdb/',  # Caminho do bucket no Minio
         "schema": StructType([
@@ -54,6 +60,7 @@ def get_configuration():
         ])
     }
     return configuration
+
 
 
 

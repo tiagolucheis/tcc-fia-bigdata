@@ -42,8 +42,8 @@ start_dag = DummyOperator(
                 dag=dag
                 )
 
-sensor_extraction = DailyExternalTaskSensor(
-                    task_id = 'sensor_extraction',
+sensor_extraction_IGDB = DailyExternalTaskSensor(
+                    task_id = 'sensor_extraction_IGDB',
                     external_dag_id = 'dag_raw_IGDB',
                     external_task_id = 'read_data_IGDB',
                     check_existence = False,
@@ -130,13 +130,212 @@ task_platforms = SparkSubmitOperator(
                       )
 
 
+
+# ------------------ Keywords ------------------
+
+specific_args_keywords = {
+    'api_name': 'igdb',
+    'endpoint': 'keywords',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'cheksum slug url'
+}
+
+task_keywords = SparkSubmitOperator(
+                          task_id='create_context_IGDB_keywords',
+                          conn_id='spark_local',
+                          jars=jars,
+                          application=application,
+                          application_args=get_application_args(specific_args_keywords),
+                          dag=dag
+                      )
+
+
+
+# ------------------ Language Supports ------------------
+
+specific_args_language_supports = {
+    'api_name': 'igdb',
+    'endpoint': 'language_supports',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum'
+}
+
+task_language_supports = SparkSubmitOperator(
+                            task_id='create_context_IGDB_language_supports',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_language_supports),
+                            dag=dag
+                        )
+
+
+
+# ------------------ Themes ------------------
+
+specific_args_themes = {
+    'api_name': 'igdb',
+    'endpoint': 'themes',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum slug url'
+}
+
+task_themes = SparkSubmitOperator(
+                            task_id='create_context_IGDB_themes',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_themes),
+                            dag=dag
+                        ) 
+
+
+
+# ------------------ Multiplayer Modes ------------------
+
+specific_args_multiplayer_modes = {
+    'api_name': 'igdb',
+    'endpoint': 'multiplayer_modes',
+    'date_cols': '',
+    'cols_to_drop': 'checksum'
+}
+
+task_multiplayer_modes = SparkSubmitOperator(
+                            task_id='create_context_IGDB_multiplayer_modes',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_multiplayer_modes),
+                            dag=dag
+                        )
+
+
+
+# ------------------ Franchises ------------------
+
+specific_args_franchises = {
+    'api_name': 'igdb',
+    'endpoint': 'franchises',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum slug url'
+}
+
+task_franchises = SparkSubmitOperator(
+                            task_id='create_context_IGDB_franchises',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_franchises),
+                            dag=dag
+                        )
+
+
+
+# ------------------ Collections ------------------
+
+specific_args_collections = {
+    'api_name': 'igdb',
+    'endpoint': 'collections',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum slug url'
+}
+
+task_collections = SparkSubmitOperator(
+                            task_id='create_context_IGDB_collections',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_collections),
+                            dag=dag
+                        )
+
+
+
+# ------------------ Game Engines ------------------
+
+specific_args_game_engines = {
+    'api_name': 'igdb',
+    'endpoint': 'game_engines',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum slug url'
+}
+
+task_game_engines = SparkSubmitOperator(
+                            task_id='create_context_IGDB_game_engines',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_game_engines),
+                            dag=dag
+                        )
+
+
+
+# ------------------ Companies ------------------
+
+specific_args_companies = {
+    'api_name': 'igdb',
+    'endpoint': 'companies',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum slug url'
+}
+
+task_companies = SparkSubmitOperator(
+                            task_id='create_context_IGDB_companies',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_companies),
+                            dag=dag
+                        )
+
+
+
+
+specific_args_involved_companies = {
+    'api_name': 'igdb',
+    'endpoint': 'involved_companies',
+    'date_cols': 'created_at updated_at',
+    'cols_to_drop': 'checksum'
+}
+
+task_involved_companies = SparkSubmitOperator(
+                            task_id='create_context_IGDB_involved_companies',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_involved_companies),
+                            dag=dag
+                        )
+
+
+# ------------------ Websites ------------------
+
+specific_args_websites = {
+    'api_name': 'igdb',
+    'endpoint': 'websites',
+    'date_cols': '',
+    'cols_to_drop': 'checksum'
+}
+
+task_websites = SparkSubmitOperator(
+                            task_id='create_context_IGDB_websites',
+                            conn_id='spark_local',
+                            jars=jars,
+                            application=application,
+                            application_args=get_application_args(specific_args_websites),
+                            dag=dag
+                        )
+
+
+
 # ------------------ Games ------------------
 
 specific_args_games = {
     'api_name': 'igdb',
     'endpoint': 'games',
     'date_cols': 'created_at first_release_date updated_at',
-    'cols_to_drop': 'checksum'
+    'cols_to_drop': 'checksum slug videos alternative_names artworks screenshots tags'
 }
 
 task_games = SparkSubmitOperator(
@@ -146,10 +345,10 @@ task_games = SparkSubmitOperator(
                             application=application,
                             application_args=get_application_args(specific_args_games),
                             dag=dag
-                        )  
+                        )
 
 
 
 # Pipeline definition
 
-start_dag >> sensor_extraction >> [task_game_modes, task_genres, task_player_perspectives, task_platforms] >> task_games >> dag_finish
+start_dag >> sensor_extraction_IGDB >> [task_game_modes, task_genres, task_platforms, task_player_perspectives, task_language_supports, task_keywords, task_themes, task_multiplayer_modes, task_franchises, task_collections, task_game_engines, task_companies, task_involved_companies, task_websites] >> task_games >> dag_finish
