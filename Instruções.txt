@@ -55,6 +55,8 @@ Instruções
 
     pip install howlongtobeatpy
 
+    pip install trino
+
     \q
 
     exit
