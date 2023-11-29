@@ -137,3 +137,74 @@ def check_source_update(spark, configuration):
     else:
         print("Não houve atualização na origem desde a última geração do contexto.")
         return False
+    
+
+
+# Converte as colunas de data para Unix Timestamp
+def convert_date_cols(df, date_cols):
+    if date_cols:
+        for col in date_cols:
+            df = df.withColumn(col, fn.to_timestamp(fn.from_unixtime(col)))
+    return df
+
+
+
+# Remove as colunas especificadas do DataFrame
+def remove_cols(df, cols):
+    if cols:
+        for col in cols:
+            df = df.drop(col)
+    return df
+
+
+
+# Ordena as colunas de um DataFrame
+def sort_cols(df):
+    return df.select(sorted(df.columns))
+
+
+
+# Obtém uma tabela de enumeração de um endpoint específico
+def get_enum_table(spark, endpoint, table_name):
+    delta_table_path = 's3a://raw/igdb_enums/' + endpoint + '/' + table_name + '/delta/'
+
+    try:
+        df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
+    except AnalysisException:
+        df_delta = None
+        
+    return df_delta
+
+
+
+# Obtém uma tabela raw de um endpoint específico
+def get_raw_table(spark, endpoint):
+    delta_table_path = 's3a://raw/igdb/' + endpoint + '/delta/'
+
+    try:
+        df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
+    except AnalysisException:
+        df_delta = None
+        
+    return df_delta
+    
+
+
+# Enriquece a tabela de contexto com uma tabela de enumeração
+def enrich_with_enum(spark, df, endpoint, enum_name):
+    
+    # Obtém a tabela de enumeração
+    df_enum = get_enum_table(spark, endpoint, enum_name)
+    # Se a tabela de enumeração existir
+    if df_enum:
+        
+        col_name = enum_name + '_name'
+        # Enriquece a tabela de contexto com a descrição da enumeração
+        df = (
+            df
+            .join(df_enum.withColumnRenamed("name", col_name), df[enum_name] == df_enum.value, 'left')
+            .drop(enum_name, "value")
+            .withColumnRenamed(col_name, enum_name)
+        )
+
+    return df

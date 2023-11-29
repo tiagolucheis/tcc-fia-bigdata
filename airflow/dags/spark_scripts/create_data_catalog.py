@@ -31,7 +31,7 @@ def get_minio_client():
 
 # Define a conexão com o Trino
 def get_trino_connection():
-    conn = dbapi.connect(host="trino", port=8080, user="trino", catalog="minio")
+    conn = dbapi.connect(host="trino", port=8080, user="trino")
     conn.autocommit = True
     return conn
 
@@ -57,25 +57,30 @@ def map_types():
 # Define as variáveis parametrizáveis do script
 def get_configuration():
     configuration = {
-        "buckets": ['raw', 'context', 'trust']              # Lista de buckets a serem criados
+        "control_buckets":     ['landing-zone', 'raw', 'context', 'trust'],     # Lista de buckets com tabelas de controle de atualização
+        "data_buckets":        ['raw', 'context', 'trust']                      # Lista de buckets com tabelas de dados
     }
     return configuration
 
 
 
 # Obtém a lista de tabelas existentes no bucket
-def get_source_tables(minio_client, bucket):
+def get_source_tables(minio_client, filter_rule, bucket):
     objects = minio_client.list_objects(bucket, recursive=True)
     tables = {}
     
+    # Ajusta o nome da Landinz Zone, em função da sintaxe do Trino
+    if bucket == 'landing-zone':
+        bucket = 'landing_zone'
+
     for obj in objects:
     
         # Analisa apenas os caminhos que contém arquivos parquet dentro de um subdiretório chamado 'delta'
-        if obj.object_name.endswith('snappy.parquet') and 'delta' in obj.object_name:
-            
-            parts = obj.object_name.split('/')
+        if obj.object_name.endswith('snappy.parquet') and filter_rule in obj.object_name:
 
-            table_name = '_'.join(parts[0:len(parts)-2])
+            parts = obj.object_name.split('/')
+            
+            table_name = bucket + '_' + '_'.join(parts[0:len(parts)-2])
             table_path = '/'.join(parts[0:len(parts)-1]) + '/'
 
             # Adiciona a tabela à lista de tabelas, se ainda não existir
@@ -86,8 +91,38 @@ def get_source_tables(minio_client, bucket):
 
 
 
+# Cria a tabela de controle de atualização no Trino
+def create_table(spark, cursor, bucket, table, path, type_mapping):
+
+    print(f"Criando/atualizando a tabela de controle de atualização para a tabela {table} do bucket {bucket}...")
+
+    # Obtém o schema da tabela parquet
+    df = spark.read.parquet(path)
+    schema = df.schema
+
+    # Aplica o mapeamento de tipos entre o Spark e o Trino
+    for field in schema:
+        field.dataType = type_mapping[str(field.dataType)]
+
+    # Define as colunas da tabela para o comando SQL
+    columns = ', '.join([f'{field.name} {field.dataType}' for field in schema])
+
+    cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS control.default.{table} (
+            {columns}
+        )
+        WITH (
+            format = 'parquet',
+            external_location = '{path}'
+        ) 
+    ''')
+    
+    print(cursor.fetchall())
+
+
+
 # Cria uma tabela no Trino, a partir de um arquivo Delta Parquet
-def create_table(cursor, bucket, table, path, columns):
+def register_table(cursor, bucket, table, path):
 
     # Registrar a tabela no Trino
     cursor.execute(f'''
@@ -101,24 +136,23 @@ def create_table(cursor, bucket, table, path, columns):
     print(cursor.fetchall())
 
 
+
 # Cria o schema no Trino para cada bucket
 def create_schema(trino_connection, buckets):
 
     # Obtém o cursor do Trino para execução dos comandos SQL
     cursor = trino_connection.cursor()
 
-    print("Buckets a serem criados/atualizados:")
-    print(buckets)
-
     # Cria o schema para cada bucket
     for bucket in buckets:
-        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {bucket}")
+        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS minio.{bucket}")
+
     cursor.close()
 
 
 
 # Cria as tabelas no Trino para cada bucket
-def create_tables(spark, minio_client, trino_connection, buckets, type_mapping):
+def create_tables(spark, minio_client, trino_connection, buckets, filter_rule, type_mapping=""):
     
     # Obtém o cursor do Trino para execução dos comandos SQL
     cursor = trino_connection.cursor()
@@ -127,18 +161,21 @@ def create_tables(spark, minio_client, trino_connection, buckets, type_mapping):
 
         print(f"Criando/atualizando as tabelas do schema {bucket}...")
         
+        # Define o Catálogo e o Schema do Trino
+        if filter_rule == 'delta':
+            catalog_schema = f"minio.{bucket}"
+        elif filter_rule == 'control_table':
+            catalog_schema = "control.default"
+        else:
+            print(f"Erro ao obter a lista de tabelas do bucket {bucket}.")
+            break
+
         # Obtém a lista de tabelas do bucket
-        cursor.execute(f'SHOW TABLES IN {bucket}')
+        cursor.execute(f'SHOW TABLES IN {catalog_schema}')
         existing_tables = [row[0] for row in cursor.fetchall()]
 
-        print(f"Tabelas existentes no schema {bucket}:")
-        print(existing_tables)
-
         # Obtém a lista de tabelas do bucket
-        tables = get_source_tables(minio_client, bucket)
-
-        print(f"Tabelas a serem criadas/atualizadas no schema {bucket}:")
-        print(tables)
+        tables = get_source_tables(minio_client, filter_rule, bucket)
 
         # Cria as tabelas no Trino
         for table, path in tables.items():
@@ -148,57 +185,62 @@ def create_tables(spark, minio_client, trino_connection, buckets, type_mapping):
             # Define o Path do arquivo Delta Parquet
             delta_path = f"s3a://{bucket}/{path}"
 
-            # Lê o arquivo Delta Parquet
-            delta_table = DeltaTable.forPath(spark, delta_path).toDF()
-            
-            # Lê os metadados do arquivo Delta Parquet
-            schema = delta_table.schema
-            
-            print(f"Colunas da tabela {table}: {schema.names}")
-
-            # Aplica o mapeamento de tipos entre o Spark e o Trino
-            for field in schema:
-                field.dataType = type_mapping[str(field.dataType)]
-
-            # Define as colunas da tabela para o comando SQL
-            columns = ', '.join([f'{field.name} {field.dataType}' for field in schema])
-
-            print(f"Colunas da tabela {table} no formato SQL: {columns}")
-
-            # Verifica se a tabela já existe no Trino
             try:
-                
+
+                # Ajusta o nome da tabela, caso seja uma tabela de controle de atualização
+                if filter_rule == 'control_table':
+                    table = 'ctrl_' + table
+
                 # Verifica se a tabela já existe no Trino
                 if table in existing_tables:
+
+                    if filter_rule == 'delta':
                     
-                    # Tabela já existe no Trino, então procede com a comparação e possível atualização
-                    cursor.execute(f'SHOW COLUMNS FROM {bucket}.{table}')
-                    existing_columns = [row[0] for row in cursor.fetchall()]
+                        # Tabela já existe no Trino, então procede com a comparação e possível atualização
+                        cursor.execute(f'SHOW COLUMNS FROM {catalog_schema}.{table}')
+                        existing_columns = [row[0] for row in cursor.fetchall()]
 
-                    # Compara as colunas da tabela com as colunas existentes no Trino
+                        # Lê o arquivo Delta Parquet
+                        delta_table = DeltaTable.forPath(spark, delta_path).toDF()
+                        
+                        # Lê os metadados do arquivo Delta Parquet
+                        schema = delta_table.schema
 
-                    if existing_columns != schema.names:
-                        # Se as colunas forem diferentes, recria a tabela no Trino
-                        cursor.execute(f"DROP TABLE IF EXISTS {bucket}.{table}")
-                        create_table(cursor, bucket, table, delta_path, columns)
+                        # Compara as colunas da tabela com as colunas existentes no Trino
+                        if existing_columns != schema.names:
+                            # Se as colunas forem diferentes, recria a tabela no Trino
+                            cursor.execute(f"DROP TABLE IF EXISTS {catalog_schema}.{table}")
+                            create_table(cursor, bucket, table, delta_path)
 
-                        print(f"Tabela {table} atualizada com sucesso no schema {bucket}.")
+                            print(f"Tabela {table} atualizada com sucesso no catálogo minio, schema {bucket}.")
 
-                    else:
-                        print(f"Tabela {table} já existe no schema {bucket}.")
+                        else:
+                            print(f"Tabela {table} já existe no catálogo minio, schema {bucket}.")
+
+                    else: 
+                        print(f"Tabela {table} já existe no catálogo control.")
 
                 else:
+                    
+                    if filter_rule == 'delta':
 
-                    # Tabela não existe no Trino, então cria a tabela
-                    create_table(cursor, bucket, table, delta_path, columns)
+                        # Tabela não existe no Trino, então cria a tabela
+                        register_table(cursor, bucket, table, delta_path)
 
-                    print(f"Tabela {table} criada com sucesso no schema {bucket}.")
+                        print(f"Tabela {table} criada com sucesso no catálogo minio, schema {bucket}.")
+
+                    else:
+
+                        # Cria a tabela de controle de atualização
+                        create_table(spark, cursor, bucket, table, delta_path, type_mapping)
+                        
+                        print(f"Tabela {table} criada com sucesso no catálogo control.")
 
 
             except Exception as e:
                 print(f"Erro ao criar/atualizar a tabela {table} no schema {bucket}.")
                 print(e)
-
+            
         cursor.close()
 
 
@@ -210,15 +252,18 @@ def main():
     trino_connection = get_trino_connection()
     configuration = get_configuration()
     type_mapping = map_types()
-
+    
     # Métrica de tempo de execução (início da criação do catálogo)
     start_time = time.time() 
 
     # Cria o schema para cada bucket
-    create_schema(trino_connection, configuration['buckets'])
+    create_schema(trino_connection, configuration['data_buckets'])
 
     # Cria as tabelas de cada bucket no Trino
-    create_tables(spark, minio_client, trino_connection, configuration['buckets'], type_mapping)
+    create_tables(spark, minio_client, trino_connection, configuration['data_buckets'], 'delta')
+
+    # Cria as tabelas de controle de atualização no Trino
+    create_tables(spark, minio_client, trino_connection, configuration['control_buckets'], 'control_table', type_mapping)
 
     # Métrica de tempo de execução (fim da criação do catálogo)
     end_time = time.time()
