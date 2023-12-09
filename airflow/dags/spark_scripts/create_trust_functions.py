@@ -27,29 +27,20 @@ def create_spark_session():
 # Define as variáveis parametrizáveis do script
 def get_configuration(args):
 
-    source_bucket_path = 's3a://raw/' + args.api_name + '/' + args.endpoint + '/'
-    target_bucket_path = 's3a://context/' + args.api_name + '/' + args.endpoint + '/'
+    source_bucket_path = 's3a://context/'
+    target_bucket_path = 's3a://trust/' + args.table_name + '/'
 
-    # Se não houver colunas de data ou colunas a serem removidas, define a lista como None
-    date_cols = None
-    cols_to_drop = None
-
-    # Se houver colunas de data ou colunas a serem removidas, cria uma lista com os nomes das colunas
-    if args.date_cols:
-        date_cols = args.date_cols.split()
-    if args.cols_to_drop:
-        cols_to_drop = args.cols_to_drop.split()
-    
+    # Cria uma lista que contém uma lista com o nome da API e o nome do endpoint para cada tabela de origem
+    source_tables = [table.split('.') for table in args.source_tables.split()]
+       
     configuration = {
-        "source_bucket_name": 'raw',                # Nome do bucket de origem
+
+        "table_name": args.table_name,                   # Nome da tabela
+        "source_tables": source_tables,             # Tabelas utilizadas como fonte de dados (API e endpoint)
+
         "source_bucket_path": source_bucket_path,   # Caminho do bucket de origem
         "target_bucket_path": target_bucket_path,   # Caminho do bucket de destino
-
-        "api_name": args.api_name,                  # Nome da API
-        "endpoint": args.endpoint,                  # Nome do endpoint
-        "date_cols": date_cols,                     # Colunas de data da tabela (para conversão para Unix Timestamp)
-        "cols_to_drop": cols_to_drop,               # Colunas a serem removidas da tabela de contexto
-
+        
         "schema": StructType([
             StructField("Exec_date", StringType(), nullable=False),
             StructField("Exec_time", LongType(), nullable=False),
@@ -99,7 +90,7 @@ def update_target_control_table(spark, schema, target_bucket_path, exec_time, ta
 # Salva o DataFrame como uma tabela Delta
 def save_delta_table(df, delta_table_path, format="delta", mode="overwrite"):
     df.write.format(format).mode(mode).option("overwriteSchema", "true").save(delta_table_path)
-    
+
 
 
 # Carrega o Dataframe com os dados atuais e define a data e hora da última leitura realizada
@@ -122,89 +113,28 @@ def get_last_run(df_control):
 # Verifica se houve atualização na origem desde a última geração do contexto para o endpoint
 def check_source_update(spark, configuration):
     
-    # Obtém a data e hora da última atualização do endpoint
-    df_source_control = get_source_control_table(spark, configuration["source_bucket_path"])
-    last_source_update = get_last_run(df_source_control)
-    
-    # Obtém a data e hora da última criação do contexto para o endpoint
+    # Obtém a data e hora da última criação da tablela trust
     df_target_control = get_target_control_table(spark, configuration["target_bucket_path"], configuration["schema"])
     last_target_run = get_last_run(df_target_control)
+        
+    # Obtém a data e hora da última atualização de cada tabela de origem
+    last_source_updates = []
+
+    for source_table in configuration['source_tables']:
+        df_source_control = get_source_control_table(spark, configuration["source_bucket_path"] + source_table[0] + '/' + source_table[1] + '/')
+        last_source_updates.append(get_last_run(df_source_control))
     
-    # Verifica se houve atualização na origem desde a última geração do contexto para o endpoint
-    if not last_target_run or (last_source_update["Exec_time"] > last_target_run["Exec_time"]):
-        print("Houve atualização na origem desde a última geração do contexto.")
-        return True
-    else:
-        print("Não houve atualização na origem desde a última geração do contexto.")
-        return False
+    # Verifica se houve atualização nas origenes desde a última geração da tabela trust
+    for last_source_update in last_source_updates:
+        if not last_target_run or (last_source_update["Exec_time"] > last_target_run["Exec_time"]):
+            print("Houve atualização na origem desde a última geração da tabela.")
+            return True
     
-
-
-# Converte as colunas de data para Unix Timestamp
-def convert_date_cols(df, date_cols):
-    if date_cols:
-        for col in date_cols:
-            df = df.withColumn(col, fn.to_timestamp(fn.from_unixtime(col)))
-    return df
-
-
-
-# Remove as colunas especificadas do DataFrame
-def remove_cols(df, cols):
-    if cols:
-        for col in cols:
-            df = df.drop(col)
-    return df
-
+    print("Não houve atualização nas origens desde a última geração da tabela.")
+    return False
+    
 
 
 # Ordena as colunas de um DataFrame
 def sort_cols(df):
     return df.select(sorted(df.columns))
-
-
-
-# Obtém uma tabela de enumeração de um endpoint específico
-def get_enum_table(spark, endpoint, table_name):
-    delta_table_path = 's3a://raw/igdb_enums/' + endpoint + '/' + table_name + '/delta/'
-
-    try:
-        df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
-    except AnalysisException:
-        df_delta = None
-        
-    return df_delta
-
-
-
-# Obtém uma tabela raw de um endpoint específico
-def get_raw_table(spark, endpoint):
-    delta_table_path = 's3a://raw/igdb/' + endpoint + '/delta/'
-
-    try:
-        df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
-    except AnalysisException:
-        df_delta = None
-        
-    return df_delta
-    
-
-
-# Enriquece a tabela de contexto com uma tabela de enumeração
-def enrich_with_enum(spark, df, endpoint, enum_name):
-    
-    # Obtém a tabela de enumeração
-    df_enum = get_enum_table(spark, endpoint, enum_name)
-    # Se a tabela de enumeração existir
-    if df_enum:
-        
-        col_name = enum_name + '_name'
-        # Enriquece a tabela de contexto com a descrição da enumeração
-        df = (
-            df
-            .join(df_enum.withColumnRenamed("name", col_name), df[enum_name] == df_enum.value, 'left')
-            .drop(enum_name, "value")
-            .withColumnRenamed(col_name, enum_name)
-        )
-
-    return df

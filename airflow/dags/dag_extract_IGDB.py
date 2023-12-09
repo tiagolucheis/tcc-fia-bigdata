@@ -16,7 +16,7 @@ default_args = {
 
 # Pipeline definition
 
-dag = DAG(dag_id='dag_extract_IGDB',
+dag = DAG(dag_id='dag_01_extract_IGDB',
           default_args=default_args,
           schedule_interval='0 5 * * *',
           tags=['LANDING', 'IGDB', 'API', 'JSON', 'CSV']

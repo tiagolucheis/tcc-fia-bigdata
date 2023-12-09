@@ -13,6 +13,24 @@ default_args = {
     'start_date': datetime(2023, 10, 28)
 }
 
+# Define as configurações de cada DAG
+dag_configurations = {
+    'dag_05_data_catalog_daily': {
+        'dag_id': 'dag_05_data_catalog_daily',
+        'desired_days_of_week': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+        'scheduled_hour': 10,
+        'scheduled_minute': 15,
+        'external_dag_id': 'dag_04_trust_daily'
+    },
+    'dag_05_data_catalog_weekly': {
+        'dag_id': 'dag_05_data_catalog_weekly',
+        'desired_days_of_week': ['Sunday'],
+        'scheduled_hour': 13,
+        'scheduled_minute': 15,
+        'external_dag_id': 'dag_04_trust_weekly'
+    }
+}
+
 jars = '/usr/local/airflow/jars/aws-java-sdk-dynamodb-1.11.534.jar,\
         /usr/local/airflow/jars/aws-java-sdk-core-1.11.534.jar,\
         /usr/local/airflow/jars/aws-java-sdk-s3-1.11.534.jar,\
@@ -23,35 +41,51 @@ jars = '/usr/local/airflow/jars/aws-java-sdk-dynamodb-1.11.534.jar,\
 application = '/usr/local/airflow/dags/spark_scripts/create_data_catalog.py'
 
 
+# Define o intervalo de execução da DAG de acordo com os dias da semana
+def get_schedule_interval(hour, minute, desired_days_of_week):
 
-# Pipeline definition
+    # Define o número do dia da semana de acordo com o calendário do cron
+    days_of_week = {
+        'Sunday': 0,
+        'Monday': 1,
+        'Tuesday': 2,
+        'Wednesday': 3,
+        'Thursday': 4,
+        'Friday': 5,
+        'Saturday': 6
+    }
 
-dag = DAG(dag_id='dag_data_catalog',
-          default_args=default_args,
-          schedule_interval='0 10 * * *',
-          tags=['CONTEXT', 'APP', 'Hive']
-      )
+    # Converte o número do dia da semana para o formato do cron
+    desired_days_of_week = [str(days_of_week[day]) for day in desired_days_of_week]
 
-start_dag = DummyOperator(
-                task_id='start_dag',
-                dag=dag
+    # Retorna o intervalo de execução da DAG
+    return f"{minute} {hour} * * {','.join(desired_days_of_week)}"
+
+
+# Gera as DAGs de acordo com suas configurações e as configurações dos sensores 
+def generate_dag(dag_config, default_args):
+
+    # Definições da DAG
+    dag = DAG(
+        dag_id=dag_config['dag_id'],
+        default_args=default_args,
+        schedule_interval=get_schedule_interval(dag_config['scheduled_hour'], dag_config['scheduled_minute'], dag_config['desired_days_of_week']),
+        tags=['LANDING', 'RAW', 'CONTEXT', 'TRUST', 'Hive']
+    )
+
+    # Cria a task de início da DAG
+    start_dag = DummyOperator(task_id='start_dag', dag=dag)
+
+    # Cria o sensore de execução da DAG externa    
+    sensor = DailyExternalTaskSensor(
+                task_id = 'sensor_trust_creation',
+                external_dag_id = dag_config['external_dag_id'],
+                external_task_id = 'dag_finish',
+                check_existence = False,
+                dag = dag
                 )
-
-sensor_extraction_context_IGDB = DailyExternalTaskSensor(
-                    task_id = 'sensor_extraction_context_IGDB',
-                    external_dag_id = 'dag_context_IGDB',
-                    external_task_id = 'dag_finish',
-                    check_existence = False,
-                    dag = dag
-                    )
-
-dag_finish = DummyOperator(
-                 task_id='dag_finish',
-                 dag=dag
-                 )
-
-
-task = SparkSubmitOperator(
+    
+    task = SparkSubmitOperator(
                     task_id='create_data_catalog',
                     conn_id='spark_local',
                     jars=jars,
@@ -59,8 +93,24 @@ task = SparkSubmitOperator(
                     dag=dag
                 )
 
+    
+    # Cria a task de conclusão da DAG
+    dag_finish = DummyOperator(task_id='dag_finish', dag=dag)
+
+    # Pipeline definition
+
+    start_dag >> sensor >> task >> dag_finish
+
+    return dag
 
 
-# Pipeline definition
+# Criação das DAGs
+dag_daily = generate_dag(
+    dag_config=dag_configurations['dag_05_data_catalog_daily'],
+    default_args=default_args
+)
 
-start_dag >> sensor_extraction_context_IGDB >> task >> dag_finish
+dag_weekly = generate_dag(
+    dag_config=dag_configurations['dag_05_data_catalog_weekly'],
+    default_args=default_args
+)

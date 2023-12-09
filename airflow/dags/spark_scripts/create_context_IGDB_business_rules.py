@@ -9,7 +9,7 @@ map_business_rules = {
     'age_rating_content_descriptions': 'br_categories',
     'collections': 'br_standard',
     'companies': 'br_standard',
-    'covers': 'br_standard',
+    'covers': 'br_covers',
     'external_games': 'br_categories',
     'franchises': 'br_standard',
     'game_engines': 'br_standard',
@@ -62,6 +62,21 @@ def br_categories(spark, df, configuration):
 
     # Enriquece a tabela de contexto com as categorias definidas na tabela de enumeração
     df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+
+    return cfn.sort_cols(df)
+
+
+
+# ------------------------------- Covers -------------------------------
+
+# Aplica as transformações e regras de negócio específicas da tabela covers do IGDB
+def br_covers(spark, df, configuration):
+
+    # Altera a url para obter a imagem em alta resolução
+    df = (
+        df
+        .withColumn("url", fn.regexp_replace(fn.col("url"), "t_thumb", "t_cover_big"))
+    )
 
     return cfn.sort_cols(df)
 
@@ -244,8 +259,7 @@ def br_release_dates(spark, df, configuration):
         df = (
             df
             .join(df_platforms, df.platform == df_platforms.platform_id, 'left')
-            .drop("platform_id", "platform")
-            .withColumnRenamed("platform_name", "platform")
+            .drop("platform")
         )
     
     return cfn.sort_cols(df)

@@ -13,7 +13,7 @@ default_args = {
     'start_date': datetime(2023, 10, 1)
 }
 
-dag = DAG(dag_id='dag_extract_HLTB',
+dag = DAG(dag_id='dag_01_extract_HLTB',
           default_args=default_args,
           schedule_interval='0 6 * * 0',
           tags=['LANDING', 'HLTB', 'API', 'JSON']
