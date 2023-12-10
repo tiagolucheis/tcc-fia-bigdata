@@ -171,6 +171,7 @@ def get_enum_table(spark, endpoint, table_name):
     try:
         df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
     except AnalysisException:
+        print(f"A tabela de enumeração {table_name} não existe.")
         df_delta = None
         
     return df_delta

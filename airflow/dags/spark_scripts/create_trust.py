@@ -33,8 +33,7 @@ def main():
 
     print(f"Iniciando a criação da tabela trust {configuration['table_name']}.")
 
-    if tfn.check_source_update(spark, configuration) or 1==1: 
-    # ATENÇÃO! Remover o 1==1 após os testes de desenvolvimento
+    if tfn.check_source_update(spark, configuration): 
         
         # Cria a tabela, aplicando transformações e regras de negócio específicas
         df_target = br.apply_business_rules(spark, configuration)

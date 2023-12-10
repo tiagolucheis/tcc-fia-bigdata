@@ -122,6 +122,22 @@ def br_games_by_platform(spark, configuration):
         .orderBy("game_id", "platform_id")
     )
 
+    # Categoriza a família de plataformas de acordo com critérios pré-definidos, apenas para as plataformas que não possuem família definida
+    df = (
+        df
+        .withColumn('platform_family', fn.when(fn.col('platform_family').isNull(), 
+                                                fn.when(fn.col('platform_category').isin('arcade'), 'Arcade').otherwise(
+                                                fn.when(fn.col('platform_category').isin('console'), 'Other Consoles').otherwise(
+                                                fn.when(fn.col('platform_category').isin('portable_console'), 'Portable Console').otherwise(
+                                                fn.when(fn.col('platform_category').isin('platform'), 'Cloud Gaming').otherwise(
+                                                fn.when(fn.col('platform_category').isin('computer'), 'Computer').otherwise(
+                                                fn.when(fn.col('platform_category').isin('operating_system'),
+                                                        fn.when(fn.col('platform_name').isin('iOS', 'Android', 'BlackBerry OS', 'Windows Mobile', 'Palm OS', 'Windows Phone'), 'Mobile')
+                                                        .otherwise('Computer')
+                                                )))))))
+                                                .otherwise(fn.col('platform_family')))
+    )
+
     # Define valores padrão para os campos nulos
     df = (
         df
@@ -271,6 +287,7 @@ def br_games_by_franchise(spark, configuration):
             fn.col('id').alias('game_id'),
             fn.col('name').alias('game_name'),
             fn.col('category').alias('game_category'),
+            fn.year((fn.col('first_release_date'))).alias('release_year'),
             fn.lit(None).alias('franchise_id')
         )
     )
@@ -282,6 +299,7 @@ def br_games_by_franchise(spark, configuration):
             fn.col('id').alias('game_id'),
             fn.col('name').alias('game_name'),
             fn.col('category').alias('game_category'),
+            fn.year((fn.col('first_release_date'))).alias('release_year'),
             fn.explode(fn.col('franchises')).alias('franchise_id')
         )
     )
@@ -298,7 +316,8 @@ def br_games_by_franchise(spark, configuration):
             df.game_name,
             df.game_category,
             df.franchise_id,
-            fn.col('name').alias('franchise_name')
+            fn.col('name').alias('franchise_name'),
+            df.release_year
         )
         .orderBy("game_id", "franchise_id")
     )
@@ -622,8 +641,8 @@ def br_games(spark, configuration):
     df = (
         df_games_igdb
         .select(
-            fn.col('aggregated_rating').alias('igdb_external_critics_rating'),
-            fn.col('aggregated_rating_count').alias('igdb_external_critics_rating_count'),
+            fn.col('aggregated_rating').alias('rating_igdb_external_critics'),
+            fn.col('aggregated_rating_count').alias('rating_igdb_external_critics_count'),
             fn.col('bundles'),
             fn.col('category'),
             fn.col('collection'),
@@ -641,15 +660,15 @@ def br_games(spark, configuration):
             fn.col('name'),
             fn.col('parent_game'),
             fn.col('ports'),
-            fn.col('rating').alias('igdb_user_rating'),
-            fn.col('rating_count').alias('igdb_user_rating_count'),
+            fn.col('rating').alias('rating_igdb_users'),
+            fn.col('rating_count').alias('rating_igdb_users_count'),
             fn.col('remakes'),
             fn.col('remasters'),
             fn.col('similar_games'),
             fn.col('standalone_expansions'),
             fn.col('status'),
-            fn.col('total_rating').alias('igdb_total_rating'),
-            fn.col('total_rating_count').alias('igdb_total_rating_count'),
+            fn.col('total_rating').alias('rating_igdb_total'),
+            fn.col('total_rating_count').alias('rating_igdb_total_count'),
             fn.col('version_parent'),
             fn.col('version_title')
         )
@@ -680,7 +699,7 @@ def br_games(spark, configuration):
             'release_year',
             'steam_id'
         )
-        .withColumnRenamed('review_score', 'hltb_user_rating')
+        .withColumnRenamed('review_score', 'rating_hltb_users')
     )
 
 
@@ -692,10 +711,11 @@ def br_games(spark, configuration):
         .orderBy('id')
     )
 
-    # Cria um campo para calcular o Rating Médio entre o IGDB e o HLTB
+    # Cria um campo para calcular a avaliação média dos usuários e total
     df = (
         df
-        .withColumn('avarage_rating', (fn.col('igdb_user_rating') + fn.col('hltb_user_rating')) / 2)
+        .withColumn('average_rating_users', (fn.coalesce(fn.col('rating_igdb_users'), fn.col('rating_hltb_users')) + fn.coalesce(fn.col('rating_hltb_users'), fn.col('rating_igdb_users'))) / 2)
+        .withColumn('average_rating_total', (fn.col('rating_igdb_total') + fn.coalesce(fn.col('rating_hltb_users'), fn.col('rating_igdb_total'))) / 2)
     )
 
     return tfn.sort_cols(df)

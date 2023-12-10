@@ -35,8 +35,7 @@ def main():
 
     print(f"Iniciando a criação da tabela de contexto para a tabela {configuration['endpoint']} do {configuration['api_name']}.")
 
-    if cfn.check_source_update(spark, configuration) or 1==1:
-    # ATENÇÃO! Remover o 1==1 após os testes de desenvolvimento
+    if cfn.check_source_update(spark, configuration):
         
         # Obtém a tabela delta raw correspondente
         df_source = cfn.get_delta_table(spark, configuration["source_bucket_path"] + 'delta/')

@@ -206,6 +206,11 @@ def create_tables(spark, minio_client, trino_connection, buckets, filter_rule, t
                         # Lê os metadados do arquivo Delta Parquet
                         schema = delta_table.schema
 
+                        # Se a tabela for a game_age_ratings do schema trust, imprime as colunas
+                        if table == 'trust_game_age_ratings':
+                            print(f"Colunas da tabela delta {table}: {schema.names}")
+                            print(f"Colunas da tabela {table} no catálogo minio: {existing_columns}")
+
                         # Compara as colunas da tabela com as colunas existentes no Trino
                         if existing_columns != schema.names:
                             # Se as colunas forem diferentes, recria a tabela no Trino
