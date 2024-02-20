@@ -1,8 +1,8 @@
-Instruções
+Instruções para Deploy
 
 1 - Fazer o pull (download) das imagens (apenas na primeira vez):
 
-  1.1 - No terminal do VSCode rodar os comandos:
+  1.1 - Em um terminal, executar os comandos abaixo para baixar as imagens:
   
     docker pull trinodb/trino:latest
     docker pull ferrettivinicius/hive-metastore
@@ -17,7 +17,7 @@ Instruções
 
 2 - Criar os owners e databases necessários no Postgres (apenas na primeira vez):
 
-  2.1 - No terminal do VSCode rodar os comandos:
+  2.1 - No terminal, rodar os comandos:
   
     docker-compose -f .\docker-compose.yaml up -d postgres
     
@@ -37,22 +37,44 @@ Instruções
     \q
     
     exit
-  
-  
-3 - Subir os contêineres do Airflow e Jupyter (o Airflow demora pra subir):
+
+3 - Subir o contêiner do Minio:
+
+    docker-compose -f .\docker-compose.yaml up -d minio
 
 
-  3.1- Subir:
-    docker-compose -f .\docker-compose.yaml up -d airflow jupyter
   
-  3.2 - Baixar:
-    docker-compose -f .\docker-compose.yaml stop airflow jupyter
-	docker-compose -f .\docker-compose.yaml rm airflow jupyter
+3 - Subir os contêineres do Airflow e Jupyter (as dependências sobem junto):
+
+  3.1 - Subir o Airflow:
+
+    docker-compose -f .\docker-compose.yaml up -d airflow
+
+    3.1.1 - No terminal, rodar os comandos:
+
+      docker exec -it airflow bash
+
+      pip install minio
+
+      pip install delta-spark
+
+      pip install aiohttp
+
+      pip install howlongtobeatpy
+
+      pip install trino
+
+      \q
+
+      exit
+
+  3.2 - Subir o Jupyter:
+    
+    docker-compose -f .\docker-compose.yaml up -d jupyter
   
 
 4 - Subir os contêineres do Trino e Superset (as dependências sobem junto):
 
-  4.1 Subir:
     docker-compose -f .\docker-compose.yaml up -d trino superset
 
 
@@ -62,17 +84,11 @@ Instruções
   
   5.2 - URLs:
    Airflow - http://localhost:8081
-   Jupyter - rodar o comando: "docker logs jupyter" e pegar a última url com token mostrada no log
+   Jupyter - rodar o comando: "docker logs jupyter" e pegar a url com token mostrada no log
    Superset - http://localhost:8088
    Trino - http://localhost:8080
+   Minio - http://localhost:9000
   
+
   5.3 - String de conexão do Trino para configurar o Database no Superset:
-    trino://aulafia@trino:8080/minio (obs.: Na aba "Advanced", habilitar a opção "Allow DML" dentro de "SQL Lab" para permitir a criação de schemas e tabelas)
-
-  5.4 - Baixar todos os contêineres:
-    docker-compose -f .\docker-compose.yaml down
-
-
-6 - Observações:
-
-  6.1 - Não subir todos contêineres ao mesmo tempo, isso irá evitar lentidão nas ferramentas. Utilizar (Airflow + Jupyter) ou (Superset + Trino).
+    trino://aulafia@trino:8080/minio

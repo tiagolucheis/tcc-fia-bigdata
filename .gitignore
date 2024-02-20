@@ -161,11 +161,3 @@ cython_debug/
 
 # Other extensions added to prevent Docker files and data from being checked in
 *.jar
-minio/.minio.sys/tmp/.trash/
-minio/explore/
-minio/landing-zone/
-minio/raw/
-minio/context/
-minio/trust/
-superset/
-trino/
