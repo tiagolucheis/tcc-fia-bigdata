@@ -32,7 +32,7 @@ def get_configuration(args):
 
     # Cria uma lista que contém uma lista com o nome da API e o nome do endpoint para cada tabela de origem
     source_tables = [table.split('.') for table in args.source_tables.split()]
-       
+
     configuration = {
 
         "table_name": args.table_name,                   # Nome da tabela
@@ -116,12 +116,18 @@ def check_source_update(spark, configuration):
     # Obtém a data e hora da última criação da tablela trust
     df_target_control = get_target_control_table(spark, configuration["target_bucket_path"], configuration["schema"])
     last_target_run = get_last_run(df_target_control)
-        
+    
     # Obtém a data e hora da última atualização de cada tabela de origem
     last_source_updates = []
 
     for source_table in configuration['source_tables']:
-        df_source_control = get_source_control_table(spark, configuration["source_bucket_path"] + source_table[0] + '/' + source_table[1] + '/')
+        
+        if(source_table[0] == 'trust'):
+            source_control_path = 's3a://trust/' + source_table[1] + '/'
+        else:
+            source_control_path = configuration["source_bucket_path"] + source_table[0] + '/' + source_table[1] + '/'
+        
+        df_source_control = get_source_control_table(spark, source_control_path)
         last_source_updates.append(get_last_run(df_source_control))
     
     # Verifica se houve atualização nas origenes desde a última geração da tabela trust

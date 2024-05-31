@@ -19,6 +19,7 @@ args = parser.parse_args()
 
 def main():
     # Obtém a sessão do Spark e as variáveis de configuração
+
     spark = tfn.create_spark_session()
     configuration = tfn.get_configuration(args)
 

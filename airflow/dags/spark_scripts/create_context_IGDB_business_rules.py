@@ -8,7 +8,7 @@ map_business_rules = {
     'age_ratings': 'br_age_ratings',
     'age_rating_content_descriptions': 'br_categories',
     'collections': 'br_standard',
-    'companies': 'br_standard',
+    'companies': 'br_companies',
     'covers': 'br_covers',
     'external_games': 'br_categories',
     'franchises': 'br_standard',
@@ -61,10 +61,39 @@ def br_standard(spark, df, configuration):
 def br_categories(spark, df, configuration):
 
     # Enriquece a tabela de contexto com as categorias definidas na tabela de enumeração
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'category')
 
     return cfn.sort_cols(df)
 
+
+
+# ------------------------------- Companies -------------------------------
+
+# Aplica as transformações e regras de negócio específicas da tabela companies do IGDB
+def br_companies(spark, df, configuration):
+
+    # Duplica a coluna 'country' para criar as colunas 'Country Code' e 'Country Alpha-3'
+    df = (
+        df
+        .withColumn("countryname", fn.col("country"))
+        .withColumn("countryalpha3", fn.col("country"))
+        .withColumnRenamed("country", "coutry_code")
+    )
+
+    # Enriquece a tabela de contexto com o país da companhia, a partir da tabela de enumeração
+    df = cfn.enrich_with_enum(spark, df, "aux_enums",'iso_country_code', 'countryname')
+
+    # Enriquece a tabela de contexto com o código Alpha-3 do país da companhia, a partir da tabela de enumeração
+    df = cfn.enrich_with_enum(spark, df, "aux_enums",'iso_country_code', 'countryalpha3')
+
+    #Renomeia as colunas
+    df = (
+        df
+        .withColumnRenamed("countryname", "country_name")
+        .withColumnRenamed("countryalpha3", "country_alpha3")
+    )
+
+    return cfn.sort_cols(df)
 
 
 # ------------------------------- Covers -------------------------------
@@ -87,10 +116,10 @@ def br_covers(spark, df, configuration):
 def br_games(spark, df, configuration):
     
     # Enriquece a tabela de contexto com as categorias do jogo
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'category')
     
     # Enriquece a tabela de contexto com o status do jogo
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'status')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'status')
 
     return cfn.sort_cols(df)
 
@@ -103,7 +132,7 @@ def br_games(spark, df, configuration):
 def br_platforms(spark, df, configuration):
     
     # Enriquece a tabela de contexto com as categorias da plataforma
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'category')
     
     # Obtém a tabela de família de plataformas
     df_family = (
@@ -179,10 +208,10 @@ def br_language_supports(spark, df, configuration):
 def br_age_ratings(spark, df, configuration):
     
     # Enriquece a tabela de contexto com as categorias do rating
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'category')
 
     # Enriquece a tabela de contexto com o tipo de rating
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'rating')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'rating')
     
     return cfn.sort_cols(df)
 
@@ -222,10 +251,10 @@ def br_game_localizations(spark, df, configuration):
 def br_release_dates(spark, df, configuration):
     
     # Enriquece a tabela de contexto com a categoria de data de lançamento
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'category')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'category')
 
     # Enriquece a tabela de contexto com a região do lançamento
-    df = cfn.enrich_with_enum(spark, df, configuration["endpoint"], 'region')
+    df = cfn.enrich_with_enum(spark, df, "igdb_enums",configuration["endpoint"], 'region')
 
     # Obtém a tabela de status de lançamento
     df_status = (
