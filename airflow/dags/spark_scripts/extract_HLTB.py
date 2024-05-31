@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from minio import Minio
 from howlongtobeatpy import HowLongToBeat
 import time, aiohttp, asyncio, io, json
+from pyspark.sql.window import Window
 
 
 # Define a sessão do Spark com os jars necessários para conexão com o MINIO
@@ -82,6 +83,8 @@ def load_game_list(load_type, game_list_path, spark, chunk_size, api_name="", df
 
     if load_type == 'Initial':
 
+        print("Step 1.1: Carregando a lista de jogos a serem extraídos (Carga Inicial)...")
+
         # Define a data e hora da última versão dos dados
         df_games_version = df_games.history().selectExpr("version", "timestamp").orderBy(fn.desc("version")).first()[0]
 
@@ -92,7 +95,13 @@ def load_game_list(load_type, game_list_path, spark, chunk_size, api_name="", df
             .select("id", "name", "release_year")
         )
 
+        # Imprime o número de jogos a serem extraídos
+        print("Número de jogos a serem extraídos: " + str(df_games.count()) + ".")
+        
+
     else:
+
+        print("Step 1.2: Carregando a lista de jogos a serem extraídos (Carga Incremental)...")
         
         if api_name == 'HLTB':
             
@@ -136,11 +145,24 @@ def load_game_list(load_type, game_list_path, spark, chunk_size, api_name="", df
         #frac = sample / df_games.count()
         #df_games = df_games.sample(withReplacement=False, fraction=frac, seed=42).limit(sample)
 
-    # Adiciona uma coluna de numeração para facilitar a divisão
-    df_games = df_games.withColumn("row_num", fn.monotonically_increasing_id())
+    df_games = (
+        df_games
+        .withColumn("row_num", fn.row_number().over(Window.orderBy("id")))
+        .withColumn("chunk_num", ((fn.col("row_num") - 1) / chunk_size).cast("int"))
+    )
 
-    # Adiciona uma coluna com o número do chunk
-    df_games = df_games.withColumn("chunk_num", fn.floor(df_games.row_num / chunk_size))
+    # Imprime as 200 primeiras linhas do dataframe de jogos a serem extraídos
+    df_games.show(200, truncate=False)
+
+
+    # Imprime o número de jogos a serem extraídos
+    print("Número de jogos a serem extraídos: " + str(df_games.count()) + ".")
+    
+    # Imprime o número de registros a serem extraídos, a partir da coluna row_num
+    print("Número de registros a serem extraídos: " + str(df_games.agg(fn.max("row_num")).collect()[0][0] + 1) + ".")
+
+    # imprime o número de chunks
+    print("Número de chunks: " + str(df_games.agg(fn.max("chunk_num")).collect()[0][0] + 1) + ".")
 
     print("Step 2: Carregando a lista de jogos a serem extraídos... OK")
 
@@ -292,6 +314,8 @@ def extract_data_by_chunks(configuration, queue, search_type, extraction_time, e
 
     # Computa o número total de chunks
     total_chunks = df_games.agg(fn.max("chunk_num")).collect()[0][0] + 1
+
+    print(f"Total de chunks: {total_chunks}.")
 
     # Processa a extração de cada chunk
     for chunk in range(total_chunks):

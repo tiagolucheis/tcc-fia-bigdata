@@ -33,7 +33,7 @@ def get_configuration():
     configuration = {
         "api_name": 'igdb',
         "client_id": "nav10n96uf1vahn0sqiklmwuy331pz",
-        "authorization": "d1znlkl87wytdume5qqb6pu6u9cd35",
+        "authorization": "3hlrk0kjcnm1im7hxmwrgmaz03z77u",
         "url": 'https://api.igdb.com/v4/',
         
         "rate_limit": 1 / 4,        # Requisições por segundo (limitação da API)

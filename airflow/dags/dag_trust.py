@@ -207,6 +207,13 @@ task_configurations = {
             'source_tables': 'igdb.games igdb.player_perspectives',
         }
     },
+    'task_involved_companies_by_game': {
+        'task_id': 'create_involved_companies_by_game',
+        'specific_args': {
+            'table_name': 'involved_companies_by_game',
+            'source_tables': 'igdb.involved_companies igdb.companies igdb.games',
+        }
+    },
     'task_games': {
         'task_id': 'create_games',
         'specific_args': {
@@ -214,12 +221,20 @@ task_configurations = {
             'source_tables': 'igdb.games hltb.games igdb.covers',
         }
     },
+    'task_indie_games': {
+        'task_id': 'create_indie_games',
+        'specific_args': {
+            'table_name': 'indie_games',
+            'source_tables': 'trust.games_by_genre trust.games trust.games_by_platform trust.involved_companies_by_game',
+        }
+    }
 }
 
 # Define a lista de tasks e suas dependências
 tasks = [
-    [task_configurations['task_games_by_platform'], task_configurations['task_games_age_ratings'], task_configurations['task_game_modes_by_game'], task_configurations['task_games_by_franchise'], task_configurations['task_games_by_genre'], task_configurations['task_games_by_keyword'], task_configurations['task_games_by_themes'], task_configurations['task_language_supports_by_game'], task_configurations['task_player_perspectives_by_game']],
-    [task_configurations['task_games']]
+    [task_configurations['task_games_by_platform'], task_configurations['task_games_age_ratings'], task_configurations['task_game_modes_by_game'], task_configurations['task_games_by_franchise'], task_configurations['task_games_by_genre'], task_configurations['task_games_by_keyword'], task_configurations['task_games_by_themes'], task_configurations['task_language_supports_by_game'], task_configurations['task_player_perspectives_by_game'], task_configurations['task_involved_companies_by_game']],
+    [task_configurations['task_games']],
+    [task_configurations['task_indie_games']]
 ]
 
 

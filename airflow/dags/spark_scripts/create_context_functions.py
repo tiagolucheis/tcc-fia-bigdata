@@ -129,6 +129,8 @@ def check_source_update(spark, configuration):
     # Obtém a data e hora da última criação do contexto para o endpoint
     df_target_control = get_target_control_table(spark, configuration["target_bucket_path"], configuration["schema"])
     last_target_run = get_last_run(df_target_control)
+
+    
     
     # Verifica se houve atualização na origem desde a última geração do contexto para o endpoint
     if not last_target_run or (last_source_update["Exec_time"] > last_target_run["Exec_time"]):
@@ -165,8 +167,8 @@ def sort_cols(df):
 
 
 # Obtém uma tabela de enumeração de um endpoint específico
-def get_enum_table(spark, endpoint, table_name):
-    delta_table_path = 's3a://raw/igdb_enums/' + endpoint + '/' + table_name + '/delta/'
+def get_enum_table(spark, enum_path, endpoint, table_name):
+    delta_table_path = 's3a://raw/' + enum_path + '/' + endpoint + '/' + table_name + '/delta/'
 
     try:
         df_delta = DeltaTable.forPath(spark, delta_table_path).toDF()
@@ -192,13 +194,14 @@ def get_raw_table(spark, endpoint):
 
 
 # Enriquece a tabela de contexto com uma tabela de enumeração
-def enrich_with_enum(spark, df, endpoint, enum_name):
+def enrich_with_enum(spark, df, enum_path, endpoint, enum_name):
     
     # Obtém a tabela de enumeração
-    df_enum = get_enum_table(spark, endpoint, enum_name)
+    df_enum = get_enum_table(spark, enum_path, endpoint, enum_name)
+
     # Se a tabela de enumeração existir
     if df_enum:
-        
+
         col_name = enum_name + '_name'
         # Enriquece a tabela de contexto com a descrição da enumeração
         df = (

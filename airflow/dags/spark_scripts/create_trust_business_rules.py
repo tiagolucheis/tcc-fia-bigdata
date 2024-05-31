@@ -19,7 +19,9 @@ map_business_rules = {
     'games_by_themes': 'br_games_by_themes',
     'language_supports_by_game': 'br_language_supports_by_game',
     'player_perspectives_by_game': 'br_player_perspectives_by_game',
+    'involved_companies_by_game': 'br_involved_companies_by_game',
     'games': 'br_games',
+    'indie_games': 'br_indie_games'
 }
 
 
@@ -627,6 +629,107 @@ def br_player_perspectives_by_game(spark, configuration):
         return tfn.sort_cols(df)
 
 
+
+# ------------------------------- Involved Companies by Game -------------------------------
+
+# Aplica as transformações e regras de negócio específicas da tabela involved_companies_by_game
+
+def br_involved_companies_by_game(spark, configuration):
+     
+    # Obtém as tabelas de origem
+    df_involved_companies = tfn.get_delta_table(spark, configuration['source_bucket_path'] + configuration['source_tables'][0][0] + '/' + configuration['source_tables'][0][1] + '/delta/')
+    df_companies = tfn.get_delta_table(spark, configuration['source_bucket_path'] + configuration['source_tables'][1][0] + '/' + configuration['source_tables'][1][1] + '/delta/')
+    df_games = tfn.get_delta_table(spark, configuration['source_bucket_path'] + configuration['source_tables'][2][0] + '/' + configuration['source_tables'][2][1] + '/delta/')
+
+    # Filtra os campos necessários para a tabela final de empresas envolvidas
+    df = (
+        df_involved_companies
+        .select(
+            fn.col('id'),
+            fn.col('game').alias('game_id'),
+            fn.col('company').alias('company_id'),
+            fn.col('developer'),
+            fn.col('porting'),
+            fn.col('publisher'),
+            fn.col('supporting')
+        )
+    )
+
+    # Cria uma tabela auxiliar com as empresas e seus respectivos nomes, para facilitar o join e identificação das empresas parentes
+    df_companies_aux = df_companies.select(fn.col('id').alias('id_comp'), fn.col('name').alias('name_comp'))
+
+    # Enriquece a tabela de empresas, incluindo o nome da empresa parente (coluna parent_name) e seleciona as colunas necessárias
+    df_companies = (
+        df_companies
+        .join(df_companies_aux, df_companies.parent == df_companies_aux.id_comp, 'left_outer')
+        .select(
+            fn.col('id').alias('company_id'),
+            fn.col('name').alias('company_name'),
+            fn.col('country_name').alias('company_country'),
+            fn.col('country_alpha3').alias('company_country_alpha3'),
+            fn.col('parent').alias('parent_company_id'),
+            fn.col('name_comp').alias('parent_company_name')
+        )
+    )
+
+    # Identifica as empresas que não possuem empresa parente e atribui o próprio id e nome da empresa como id e nome da empresa parente e atribui valores padrão para os campos nulos
+    # Atribui o valor "Não Definida" para as empresas cujo país é nulo
+    df_companies = (
+        df_companies
+        .withColumn('parent_company_id', fn.when(fn.col('parent_company_id').isNull(), fn.col('company_id')).otherwise(fn.col('parent_company_id')))
+        .withColumn('parent_company_name', fn.when(fn.col('parent_company_name').isNull(), fn.col('company_name')).otherwise(fn.col('parent_company_name')))
+        .withColumn('company_country', fn.coalesce(fn.col('company_country'), fn.lit('(Não Definido)')))
+        .withColumn('company_country_alpha3', fn.coalesce(fn.col('company_country_alpha3'), fn.lit('(Não Definido)')))
+    )
+
+    # Enriquece a tabela com o nome da empresa
+    df = (
+        df
+        .join(df_companies, df.company_id == df_companies.company_id, 'left_outer')
+        .select(
+            df.id,
+            df.game_id,
+            df.company_id,
+            fn.col('company_name'),
+            fn.col('company_country'),
+            fn.col('company_country_alpha3'),
+            fn.col('parent_company_id'),
+            fn.col('parent_company_name'),
+            df.developer,
+            df.porting,
+            df.publisher,
+            df.supporting
+        )
+    )
+
+    # Enriquece a tabela com dados do jogo
+    df = (
+        df
+        .join(df_games, df.game_id == df_games.id, 'left_outer')
+        .select(
+            df.id,
+            df.game_id,
+            fn.col('name').alias('game_name'),
+            fn.col('version_title').alias('game_version_title'),
+            fn.col('category').alias('game_category'),
+            fn.col('first_release_date').alias('game_first_release_date'),
+            df.company_id,
+            df.company_name,
+            df.company_country,
+            df.company_country_alpha3,
+            df.parent_company_id,
+            df.parent_company_name,
+            df.developer,
+            df.porting,
+            df.publisher,
+            df.supporting
+        )
+    )
+
+    return tfn.sort_cols(df)
+
+
+
 # ------------------------------- Games -------------------------------
 
 # Aplica as transformações e regras de negócio específicas da tabela games e enrique com os dados das tabelas de contexto do HLTB
@@ -716,6 +819,125 @@ def br_games(spark, configuration):
         df
         .withColumn('average_rating_users', (fn.coalesce(fn.col('rating_igdb_users'), fn.col('rating_hltb_users')) + fn.coalesce(fn.col('rating_hltb_users'), fn.col('rating_igdb_users'))) / 2)
         .withColumn('average_rating_total', (fn.col('rating_igdb_total') + fn.coalesce(fn.col('rating_hltb_users'), fn.col('rating_igdb_total'))) / 2)
+    )
+
+    return tfn.sort_cols(df)
+
+
+
+# ------------------------------- Indie Games -------------------------------
+
+# Aplica as transformações e regras de negócio específicas da tabela indie_games
+def br_indie_games(spark, configuration):
+    
+    # Obtém as tabelas de origem (games_by_genre games games_by_platform involved_companies_by_game)
+    df_games_by_genre = tfn.get_delta_table(spark, 's3a://trust/' + configuration['source_tables'][0][1] + '/delta/')
+    df_games = tfn.get_delta_table(spark, 's3a://trust/' + configuration['source_tables'][1][1] + '/delta/')
+    df_platforms = tfn.get_delta_table(spark, 's3a://trust/' + configuration['source_tables'][2][1] + '/delta/')
+    df_companies = tfn.get_delta_table(spark, 's3a://trust/' + configuration['source_tables'][3][1] + '/delta/')
+
+    # Seleciona apenas os jogos do gênero "Indie"
+    df = (
+        df_games_by_genre
+        .filter(fn.col('genre_name') == 'Indie')
+        .drop('genre_id', 'genre_name')
+    )
+    
+    # Enriquece a tabela com os dados da plataforma de cada jogo
+    df = (
+        df
+        .join(df_platforms, df.game_id == df_platforms.game_id, 'left_outer')
+        .select(
+            df.game_id,
+            df.game_name,
+            df.game_category,
+            df_platforms.platform_id,
+            df_platforms.platform_name,
+            df_platforms.platform_generation,
+            df_platforms.platform_family,
+            df_platforms.platform_category,
+            df_platforms.release_date.alias('platform_release_date'),
+            df_platforms.release_year.alias('platform_release_year')
+        )
+        .orderBy("game_id", "platform_id")
+    )
+
+    # Identifica as empresas envolvidas em cada um dos jogos
+    df = (
+        df
+        .join(df_companies, df.game_id == df_companies.game_id, 'left_outer')
+        .select(
+            df.game_id,
+            df.game_name,
+            df.game_category,
+            df.platform_id,
+            df.platform_name,
+            df.platform_generation,
+            df.platform_family,
+            df.platform_category,
+            df.platform_release_date,
+            df.platform_release_year,
+            df_companies.company_id,
+            df_companies.company_name,
+            df_companies.company_country,
+            df_companies.company_country_alpha3,
+            df_companies.parent_company_id,
+            df_companies.parent_company_name,
+            df_companies.developer,
+            df_companies.porting,
+            df_companies.publisher,
+            df_companies.supporting
+        )
+        .orderBy("game_id", "platform_id", "company_id")
+    )
+
+    # Enriquece a tabela com outros dados da tabela de jogos
+    df = (
+        df
+        .join(df_games, df.game_id == df_games.id, 'left_outer')
+        .select(
+            df.game_id,
+            df.game_name,
+            df.game_category,
+            df.platform_id,
+            df.platform_name,
+            df.platform_generation,
+            df.platform_family,
+            df.platform_category,
+            df.platform_release_date,
+            df.platform_release_year,
+            df.company_id,
+            df.company_name,
+            df.company_country,
+            df.company_country_alpha3,
+            df.parent_company_id,
+            df.parent_company_name,
+            df.developer,
+            df.porting,
+            df.publisher,
+            df.supporting,
+            fn.col('first_release_date').alias('game_first_release_date'),
+            fn.col('follows').alias('game_followers'),
+            fn.col('follows_before_release').alias('game_followers_before_release'),
+            fn.col('rating_igdb_external_critics'),
+            fn.col('rating_igdb_total'),
+            fn.col('rating_igdb_users'),
+            fn.col('rating_hltb_users'),
+            fn.col('average_rating_users'),
+            fn.col('average_rating_total'),
+            fn.col('comp_time_100').alias('game_completion_time_100'),
+            fn.col('comp_time_all_styles').alias('game_completion_time_all_styles'),
+            fn.col('comp_time_main_story').alias('game_completion_time_main_story'),
+            fn.col('comp_time_main_plus_sides').alias('game_completion_time_main_plus_sides'),
+            fn.col('status').alias('game_status')
+        )
+        .orderBy("game_id", "platform_id", "company_id")
+    )
+
+    # Define valores padrão para os campos nulos
+    df = (
+        df
+        .withColumn('game_status', fn.coalesce(fn.col('game_status'), fn.lit('(Não Definido)')))
     )
 
     return tfn.sort_cols(df)
