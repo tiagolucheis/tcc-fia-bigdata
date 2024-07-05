@@ -26,14 +26,13 @@ def create_spark_session():
 def get_minio_client():
     return Minio("minio:9000", access_key="aulafia", secret_key="aulafia@123", secure=False)
 
-
     
 # Define as variáveis parametrizáveis do script
 def get_configuration():
     configuration = {
         "api_name": 'igdb',
         "client_id": "nav10n96uf1vahn0sqiklmwuy331pz",
-        "authorization": "3hlrk0kjcnm1im7hxmwrgmaz03z77u",
+        "authorization": "eszl5zh71m7gtsq9slzhjc9e4oc18v",
         "url": 'https://api.igdb.com/v4/',
         
         "rate_limit": 1 / 4,        # Requisições por segundo (limitação da API)
@@ -121,7 +120,6 @@ def update_control_table(configuration, spark, endpoint, extraction_time, load_t
             .mode('append')
             .save(control_table_path)
             )
-        
         
 
 
